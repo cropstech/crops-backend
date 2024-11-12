@@ -141,7 +141,7 @@ DEFAULT_FROM_EMAIL = 'support@photomink.com'
 # Frontend URL for verification links
 FRONTEND_URL = 'http://localhost:9100/#'  # Or your frontend URL
 # Background Removal Url
-BACKGROUND_REMOVAL_URL = 'http://5.161.108.244:8100/api/remove-background/'
+BACKGROUND_REMOVAL_URL = 'http://localhost:8100/remove-background/'
 
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:9000",
@@ -161,3 +161,6 @@ CSRF_TRUSTED_ORIGINS = [
     "http://localhost:8000",
     "http://localhost:3000",
 ]
+
+DATA_UPLOAD_MAX_MEMORY_SIZE = 52428800  # 50MB in bytes
+FILE_UPLOAD_MAX_MEMORY_SIZE = 52428800  # 50MB in bytes
