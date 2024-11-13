@@ -7,6 +7,6 @@ api = NinjaAPI(
     version='1.0',
 )
 
+api.add_router("/background-removal/", background_remover_router)
 # Mount the users router at /users
 api.add_router("/", users_router)
-api.add_router("/background-removal/", background_remover_router)

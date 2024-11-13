@@ -49,6 +49,12 @@ class ForegroundType(str, Enum):
     GRAPHIC = "graphic"
     TRANSPORTATION = "transportation"
 
+class ImageFormat(str, Enum):
+    AUTO = "auto"
+    PNG = "png"
+    JPG = "jpg"
+    ZIP = "zip"
+
 @router.post("/remove-background", summary="Remove background from image")
 async def remove_background(
     request,
@@ -58,14 +64,16 @@ async def remove_background(
     ),
     image_url: str = Form(
         None, 
-        description="URL of image to remove background from"
+        description="URL of image to remove background from",
+        example=""
     ),
     image_file_b64: str = Form(
         None, 
-        description="Base64 encoded image to remove background from"
+        description="Base64 encoded image to remove background from",
+        example=""
     ),
-    size: str = Form(
-        "preview",
+    size: ImageSize = Form(
+        ImageSize.PREVIEW,
         description="Output image resolution:\n"
         "- preview (default): 0.25 megapixels (e.g., 625×400)\n"
         "- full: Up to 25MP (ZIP/JPG) or 10MP (PNG)\n"
@@ -74,8 +82,8 @@ async def remove_background(
         "- medium: Up to 1.5MP (legacy)\n"
         "- hd: Up to 4MP (legacy)"
     ),
-    type: str = Form(
-        "auto",
+    type: ForegroundType = Form(
+        ForegroundType.AUTO,
         description="Detect or set a foreground type:\n"
         "- auto (default): Automatically detect the type\n"
         "- car: Vehicle detection\n"
@@ -84,6 +92,22 @@ async def remove_background(
         "- animal: Animal detection\n"
         "- graphic: Graphic/illustration detection\n"
         "- transportation: Any transportation method"
+    ),
+    format: ImageFormat = Form(
+        ImageFormat.AUTO,
+        description="Result image format:\n"
+        "- auto (default): Use PNG if transparent regions exist, otherwise use JPG\n"
+        "- png: PNG format with alpha transparency\n"
+        "- jpg: JPG format, no transparency\n"
+        "- zip: ZIP format with color image and alpha matte (recommended)"
+    ),
+    roi: Optional[str] = Form(
+        None,
+        description="Region of interest: Rectangular region for foreground detection.\n"
+        "Format: 'x1 y1 x2 y2' with suffix 'px' or '%'.\n"
+        "Example: '10% 20% 90% 80%' or '100px 200px 800px 600px'\n"
+        "Default: '0% 0% 100% 100%' (whole image)",
+        example="0% 0% 100% 100%"
     )
 ) -> FileResponse:
     """Remove background from image."""
@@ -97,7 +121,7 @@ async def remove_background(
 
         # Convert size alias to canonical value and log it
         logger.info(f"Original size parameter: {size}")
-        canonical_size = ImageSize.get_canonical_size(size)
+        canonical_size = ImageSize.get_canonical_size(size.value)
         logger.info(f"Canonical size: {canonical_size}")
         logger.info(f"Foreground type: {type}")
 
@@ -107,7 +131,12 @@ async def remove_background(
                 response = await client.post(
                     settings.BACKGROUND_REMOVAL_URL,
                     files=files,
-                    params={'size': canonical_size, 'type': type}
+                    params={
+                        'size': canonical_size,
+                        'type': type.value,
+                        'format': format.value,
+                        'roi': roi
+                    }
                 )
             elif image_url:
                 body = {'image_url': image_url.strip()}
@@ -116,7 +145,12 @@ async def remove_background(
                     settings.BACKGROUND_REMOVAL_URL,
                     json=body,
                     headers=headers,
-                    params={'size': canonical_size, 'type': type}
+                    params={
+                        'size': canonical_size,
+                        'type': type.value,
+                        'format': format.value,
+                        'roi': roi
+                    }
                 )
             else:
                 body = {'image_file_b64': image_file_b64}
@@ -125,7 +159,12 @@ async def remove_background(
                     settings.BACKGROUND_REMOVAL_URL,
                     json=body,
                     headers=headers,
-                    params={'size': canonical_size, 'type': type}
+                    params={
+                        'size': canonical_size,
+                        'type': type.value,
+                        'format': format.value,
+                        'roi': roi
+                    }
                 )
 
             if response.status_code != 200:
