@@ -63,12 +63,12 @@ async def remove_background(
         description="Image file to remove background from"
     ),
     image_url: str = Form(
-        None, 
+        '', 
         description="URL of image to remove background from",
         example=""
     ),
     image_file_b64: str = Form(
-        None, 
+        '', 
         description="Base64 encoded image to remove background from",
         example=""
     ),
@@ -108,6 +108,19 @@ async def remove_background(
         "Example: '10% 20% 90% 80%' or '100px 200px 800px 600px'\n"
         "Default: '0% 0% 100% 100%' (whole image)",
         example="0% 0% 100% 100%"
+    ),
+    crop: bool = Form(
+        False,
+        description="Whether to crop off all empty regions"
+    ),
+    crop_margin: Optional[str] = Form(
+        '',
+        description="Margin around the cropped subject. Only applies when crop=true.\n"
+        "Format: Single value (all sides), two values (top/bottom left/right),\n"
+        "or four values (top right bottom left) with 'px' or '%' suffix.\n"
+        "Examples: '30px', '10%', '10px 20px', '10px 20px 10px 20px'\n"
+        "Max: 50% of subject size or 500px per side.\n"
+        "Default: '0'"
     )
 ) -> FileResponse:
     """Remove background from image."""
@@ -125,18 +138,24 @@ async def remove_background(
         logger.info(f"Canonical size: {canonical_size}")
         logger.info(f"Foreground type: {type}")
 
+        params = {
+            'size': canonical_size,
+            'type': type.value,
+            'format': format.value,
+            'crop': crop,
+        }
+        if roi is not None:
+            params['roi'] = roi
+        if crop_margin is not None:
+            params['crop_margin'] = crop_margin
+
         async with httpx.AsyncClient(timeout=180.0) as client:
             if image_file:
                 files = {'image_file': (image_file.name, image_file.file, image_file.content_type)}
                 response = await client.post(
                     settings.BACKGROUND_REMOVAL_URL,
                     files=files,
-                    params={
-                        'size': canonical_size,
-                        'type': type.value,
-                        'format': format.value,
-                        'roi': roi
-                    }
+                    params=params
                 )
             elif image_url:
                 body = {'image_url': image_url.strip()}
@@ -145,12 +164,7 @@ async def remove_background(
                     settings.BACKGROUND_REMOVAL_URL,
                     json=body,
                     headers=headers,
-                    params={
-                        'size': canonical_size,
-                        'type': type.value,
-                        'format': format.value,
-                        'roi': roi
-                    }
+                    params=params
                 )
             else:
                 body = {'image_file_b64': image_file_b64}
@@ -159,16 +173,10 @@ async def remove_background(
                     settings.BACKGROUND_REMOVAL_URL,
                     json=body,
                     headers=headers,
-                    params={
-                        'size': canonical_size,
-                        'type': type.value,
-                        'format': format.value,
-                        'roi': roi
-                    }
+                    params=params
                 )
 
             if response.status_code != 200:
-                # Parse error response
                 error_detail = response.json().get('detail', response.text)
                 logger.error(f"Worker service error: {error_detail}")
                 raise Exception(f"Worker service error: {error_detail}")

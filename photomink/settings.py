@@ -38,6 +38,7 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
     'photomink.users',
+    'photomink.main',
     'corsheaders',
 ]
 
@@ -164,3 +165,5 @@ CSRF_TRUSTED_ORIGINS = [
 
 DATA_UPLOAD_MAX_MEMORY_SIZE = 52428800  # 50MB in bytes
 FILE_UPLOAD_MAX_MEMORY_SIZE = 52428800  # 50MB in bytes
+
+USERNAME_FIELD = 'email'

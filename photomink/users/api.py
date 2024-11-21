@@ -74,7 +74,7 @@ class ErrorDetail(Schema):
     details: dict = None
 
     class Config:
-        schema_extra = {
+        json_schema_extra = {
             "example": {
                 "code": "invalid_input",
                 "message": "Invalid email format",
@@ -90,7 +90,7 @@ class ApiResponseSchema(Schema):
     meta: dict = None
 
     class Config:
-        schema_extra = {
+        json_schema_extra = {
             "examples": {
                 "success": {
                     "summary": "Success Response",

@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <style>
+        body { font-family: sans-serif; line-height: 1.5; }
+        .button {
+            display: inline-block;
+            padding: 10px 20px;
+            background-color: #4CAF50;
+            color: white;
+            text-decoration: none;
+            border-radius: 4px;
+        }
+    </style>
+</head>
+<body>
+    <h2>You've been invited to {{ workspace_name }}</h2>
+    
+    <p>{{ invited_by }} has invited you to join {{ workspace_name }} as a {{ role }}.</p>
+    
+    <p>
+        <a href="{{ accept_url }}" class="button">Accept Invitation</a>
+    </p>
+    
+    <p>This invitation will expire on {{ expires_at|date:"F j, Y" }}.</p>
+    
+    <p>If you don't want to accept this invitation, you can ignore this email.</p>
+</body>
+</html> 
