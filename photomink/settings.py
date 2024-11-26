@@ -147,6 +147,12 @@ BACKGROUND_REMOVAL_URL = 'http://localhost:8100/remove-background/'
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:9000",
     "http://localhost:9100",
+    "http://localhost:8000",
+    "http://localhost:3000",
+    "http://localhost:8100",
+    "http://127.0.0.1:8000",
+    "http://127.0.0.1:9000",
+    "http://127.0.0.1:9100",
 ]
 CORS_ALLOW_CREDENTIALS = True
 CORS_EXPOSE_HEADERS = ['Content-Type', 'X-CSRFToken']
@@ -161,6 +167,9 @@ CSRF_TRUSTED_ORIGINS = [
     "http://localhost:9000",
     "http://localhost:8000",
     "http://localhost:3000",
+    'http://127.0.0.1:8000/',
+    'http://127.0.0.1:9000/',
+    'http://127.0.0.1:9100/',
 ]
 
 DATA_UPLOAD_MAX_MEMORY_SIZE = 52428800  # 50MB in bytes

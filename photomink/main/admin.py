@@ -12,8 +12,8 @@ class RoleAdmin(admin.ModelAdmin):
     search_fields = ['name', 'workspace__name']
     
 class WorkspaceMemberAdmin(admin.ModelAdmin):
-    list_display = ('user', 'workspace', 'role', 'joined_at')
-    search_fields = ['user__first_name', 'user__last_name', 'user__email', 'workspace__name']
+    list_display = ('user__email', 'user__last_name', 'workspace', 'role', 'joined_at')
+    search_fields = ['user__email', 'user__last_name', 'workspace__name']
 
 admin.site.register(Workspace, WorkspaceAdmin)
 admin.site.register(WorkspaceMember, WorkspaceMemberAdmin)

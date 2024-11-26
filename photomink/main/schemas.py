@@ -2,6 +2,7 @@ from ninja import Schema
 from typing import List, Optional
 from datetime import datetime
 from uuid import UUID
+from pydantic import ConfigDict
 
 class WorkspaceCreateSchema(Schema):
     name: str
@@ -42,3 +43,17 @@ class AssetCreateSchema(Schema):
     name: str
     description: Optional[str] = None
     file: str
+
+
+class WorkspaceInviteIn(Schema):
+    email: str
+    role: str
+    expires_at: Optional[datetime] = None
+
+class WorkspaceInviteOut(Schema):
+    id: UUID
+    token: UUID
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+class InviteAcceptSchema(Schema):
+    token: str

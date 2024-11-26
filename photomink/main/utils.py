@@ -1,6 +1,7 @@
 from django.core.mail import send_mail
 from django.conf import settings
 from django.template.loader import render_to_string
+from django.http import JsonResponse
 
 def send_invitation_email(invitation):
     """
@@ -39,3 +40,9 @@ def send_invitation_email(invitation):
         # Log the error
         print(f"Failed to send invitation email: {e}")
         return False
+
+def create_error_response(message, status=403):
+    return JsonResponse(
+        {"detail": message},
+        status=status
+    )

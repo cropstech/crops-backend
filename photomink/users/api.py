@@ -120,6 +120,7 @@ class ApiResponseSchema(Schema):
         }
 
 @router.get("/set-csrf-token",
+    auth=None,  # Disable authentication for this endpoint
     response={
         200: ApiResponseSchema
     },
@@ -162,8 +163,10 @@ def get_csrf_token(request):
         message="CSRF token generated",
         data={"csrftoken": get_token(request)}
     )
+    
 
 @router.post("/login", 
+    auth=None,
     response={
         200: ApiResponseSchema,
         401: ApiResponseSchema,
@@ -247,7 +250,6 @@ def login_view(request, payload: SignInSchema):
         )
 
 @router.post("/logout", 
-    auth=django_auth,
     response={
         200: ApiResponseSchema,
         401: ApiResponseSchema
@@ -266,8 +268,7 @@ def logout_view(request):
     logout(request)
     return ApiResponse.success(message="Logged out successfully")
 
-@router.get("/user", 
-    auth=django_auth,
+@router.get("/me", 
     response={
         200: ApiResponseSchema,
         401: ApiResponseSchema
@@ -283,6 +284,9 @@ def get_user(request):
     * 200: User details retrieved successfully
     * 401: Not authenticated
     """
+    # Get user details, otherwise return anonymous user
+    user = request.user if request.user.is_authenticated else AnonymousUser()
+    
     return ApiResponse.success(
         message="User details retrieved",
         data={
@@ -388,15 +392,13 @@ def verify_email(request, token: str):
         user.verification_token_created = None
         user.save()
         
-        return ApiResponse(
-            status="success",
+        return ApiResponse.success(
             message="Email verified successfully"
-        ).dict()
+        )
     except User.DoesNotExist:
-        return ApiResponse(
-            status="error",
+        return ApiResponse.error(
             message="Invalid verification token"
-        ).dict()
+        )
 
 @router.post("/resend-verification",
     response={
@@ -428,16 +430,14 @@ def resend_verification(request, payload: ResendVerificationSchema):
             ).dict()
 
         send_verification_email(user)
-        return ApiResponse(
-            status="success",
+        return ApiResponse.success(
             message="Verification email sent successfully"
-        ).dict()
+        )
     
     except User.DoesNotExist:
-        return ApiResponse(
-            status="success",
+        return ApiResponse.success(
             message="If this email exists and is unverified, a verification email has been sent."
-        ).dict()
+        )
     except ValueError as e:
         return ApiResponse(
             status="error",
@@ -465,16 +465,13 @@ def password_reset_request(request, payload: PasswordResetRequestSchema):
     try:
         user = User.objects.get(email=payload.email)
         send_password_reset_email(user)
-        return ApiResponse(
-            status="success",
+        return ApiResponse.success(
             message="If an account exists with this email, a password reset link has been sent."
-        ).dict()
+        )
     except User.DoesNotExist:
-        # Return same message to prevent email enumeration
-        return ApiResponse(
-            status="success",
+        return ApiResponse.success(
             message="If an account exists with this email, a password reset link has been sent."
-        ).dict()
+        )
 
 @router.post("/password-reset-confirm",
     response={
@@ -532,7 +529,6 @@ def password_reset_confirm(request, payload: PasswordResetConfirmSchema):
         ).dict()
 
 @router.post("/change-email", 
-    auth=django_auth,
     response={
         200: ApiResponseSchema,
         400: ApiResponseSchema,
@@ -643,3 +639,11 @@ def verify_email_change(request, token: str):
             status="error",
             message="Invalid verification token"
         ).dict()
+
+@router.get("/debug-session")
+def debug_session(request):
+    return {
+        "session_id": request.session.session_key,
+        "is_authenticated": request.user.is_authenticated,
+        "session_data": dict(request.session),
+    }
