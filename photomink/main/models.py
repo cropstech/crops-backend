@@ -8,12 +8,17 @@ from django.conf import settings
 
 def workspace_avatar_path(instance, filename):
     """Generate upload path for workspace avatars"""
-    return f'workspace/{instance.id}/avatars/{filename}'
+    ext = filename.split('.')[-1].lower()
+    return f'media/workspaces/{instance.id}/avatars/{uuid.uuid4()}.{ext}'
+
+def workspace_asset_path(instance, filename):
+    """Generate upload path for workspace assets"""
+    return f'media/workspaces/{instance.workspace.id}/assets/{instance.id}/{filename}'
 
 class Workspace(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     name = models.CharField(max_length=255)
-    description = models.TextField(blank=True)
+    description = models.TextField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -157,13 +162,33 @@ class Asset(models.Model):
     name = models.CharField(max_length=255)
     file = models.FileField(upload_to='assets/')
     file_type = models.CharField(max_length=20, choices=ASSET_TYPES)
-    mime_type = models.CharField(max_length=127)
+    mime_type = models.CharField(max_length=127, null=True, blank=True)
+    file_extension = models.CharField(max_length=20, null=True, blank=True)  # jpg, mp4, etc.
+
+    # Image/Video specific
+    width = models.IntegerField(null=True, blank=True)
+    height = models.IntegerField(null=True, blank=True)
+    duration = models.FloatField(null=True, blank=True)  # in seconds for video/audio
+    
     size = models.BigIntegerField()  # File size in bytes
     metadata = models.JSONField(default=dict, blank=True)  # Flexible metadata storage
     
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True)
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
+    date_created = models.DateTimeField(null=True)
+    date_modified = models.DateTimeField(auto_now=True)
+    date_uploaded = models.DateTimeField(auto_now_add=True)
+
+    class Status(models.TextChoices):
+        PROCESSING = 'PROCESSING', 'Processing'
+        COMPLETED = 'COMPLETED', 'Completed'
+        FAILED = 'FAILED', 'Failed'
+
+    status = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.PROCESSING
+    )
+    processing_error = models.TextField(null=True, blank=True)
 
     def __str__(self):
         return self.name

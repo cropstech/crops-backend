@@ -25,6 +25,10 @@ class WorkspaceUpdateSchema(Schema):
     name: Optional[str] = None
     avatar: Optional[str] = None
     description: Optional[str] = None
+    
+class WorkspaceUpdateForm(Schema):
+    name: Optional[str] = None
+    description: Optional[str] = None
 
 class WorkspaceInviteSchema(Schema):
     email: str
@@ -38,11 +42,6 @@ class ShareLinkSchema(Schema):
     expires_at: Optional[datetime] = None
     password: Optional[str] = None
     max_uses: Optional[int] = None
-    
-class AssetCreateSchema(Schema):
-    name: str
-    description: Optional[str] = None
-    file: str
 
 
 class WorkspaceInviteIn(Schema):
@@ -57,3 +56,20 @@ class WorkspaceInviteOut(Schema):
 
 class InviteAcceptSchema(Schema):
     token: str
+    
+class AssetSchema(Schema):
+    id: UUID
+    file: str
+    size: int
+    status: str
+    date_created: Optional[datetime]
+    date_modified: datetime
+    date_uploaded: datetime
+    name: Optional[str] = None
+    file_type: Optional[str] = None
+    mime_type: Optional[str] = None
+    metadata: Optional[dict] = None
+
+    model_config = ConfigDict(
+        from_attributes=True
+    )

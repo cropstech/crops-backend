@@ -11,10 +11,30 @@ https://docs.djangoproject.com/en/3.2/ref/settings/
 """
 
 from pathlib import Path
+import os
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
+
+import environ
+env = environ.Env()
+#environ.Env.read_env(os.path.join(root(), '.env'))  # reading .env file
+environ.Env.read_env(os.path.join(BASE_DIR, ".env"))  # reading .env file
+
+env = environ.Env(
+    # set casting, default value
+    DJANGO_DEBUG=(bool, False),
+    ALLOWED_HOSTS=(list, ['127.0.0.1', 'localhost']),
+    FRONTEND_URL=(str, 'https://localhost:9100/'),
+    STATIC_URL=(str, 'https://assetia.s3.us-east-2.amazonaws.com/static/'),
+    AWS_S3_CUSTOM_DOMAIN=(str, 'assetia.s3.us-east-2.amazonaws.com'),
+    AWS_STORAGE_BUCKET_NAME=(str, 'assetia'),
+    AWS_S3_LOCATION=(str, 'us-east-2'),
+    INKSCAPE_PATH=(str, 'inkscape'),
+    CELERY_BROKER_URL=(str, 'redis://:tzJ*cEscpUonRqAoVAQ9TNB%8KkGSD58%3xeNN^4@10.0.0.6:6379/0'),
+    CELERY_RESULT_BACKEND=(str, 'redis://:tzJ*cEscpUonRqAoVAQ9TNB%8KkGSD58%3xeNN^4@10.0.0.6:6379/1'),
+)
 
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/3.2/howto/deployment/checklist/
@@ -23,9 +43,9 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 SECRET_KEY = 'django-insecure-@)x+#twgq_$q6-f$-_k2(3dsu6_&h-ydhft3a)idt*9pbyw_$l'
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = env('DJANGO_DEBUG')
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = env('ALLOWED_HOSTS')
 
 
 # Application definition
@@ -40,6 +60,7 @@ INSTALLED_APPS = [
     'photomink.users',
     'photomink.main',
     'corsheaders',
+    'storages',
 ]
 
 MIDDLEWARE = [
@@ -51,6 +72,7 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    'ninja_put_patch_file_upload_middleware.middlewares.process_put_patch',
 ]
 
 ROOT_URLCONF = 'photomink.urls'
@@ -122,7 +144,7 @@ USE_TZ = True
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/3.2/howto/static-files/
 
-STATIC_URL = '/static/'
+STATIC_URL = env('STATIC_URL')
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/3.2/ref/settings/#default-auto-field
@@ -131,16 +153,18 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 # Email settings
 # EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
-EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend' # For development testing
+# EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend' # For development testing
+EMAIL_BACKEND = 'django_ses.SESBackend'
 EMAIL_HOST = 'smtp.gmail.com'  # Or your email provider
 EMAIL_PORT = 587
 EMAIL_USE_TLS = True
 EMAIL_HOST_USER = 'support@photomink.com'
 EMAIL_HOST_PASSWORD = 'your-app-specific-password'
-DEFAULT_FROM_EMAIL = 'support@photomink.com'
+DEFAULT_FROM_EMAIL = 'Assetia <support@baseline.is>'
+
 
 # Frontend URL for verification links
-FRONTEND_URL = 'http://localhost:9100/#'  # Or your frontend URL
+FRONTEND_URL = env('FRONTEND_URL')  # Or your frontend URL
 # Background Removal Url
 BACKGROUND_REMOVAL_URL = 'http://localhost:8100/remove-background/'
 
@@ -176,3 +200,96 @@ DATA_UPLOAD_MAX_MEMORY_SIZE = 52428800  # 50MB in bytes
 FILE_UPLOAD_MAX_MEMORY_SIZE = 52428800  # 50MB in bytes
 
 USERNAME_FIELD = 'email'
+
+# AWS settings
+AWS_ACCESS_KEY_ID = env('S3_ACCESS_KEY_ID')
+AWS_SECRET_ACCESS_KEY = env('S3_SECRET_ACCESS_KEY')
+AWS_STORAGE_BUCKET_NAME = env('AWS_STORAGE_BUCKET_NAME')
+AWS_S3_REGION_NAME = env('AWS_S3_LOCATION')
+AWS_S3_CUSTOM_DOMAIN = env('AWS_S3_CUSTOM_DOMAIN')
+
+# Storage configuration using Django 4.2+ format
+STORAGES = {
+    "default": {  # For media files
+        "BACKEND": "storages.backends.s3.S3Storage",
+        "OPTIONS": {
+            "bucket_name": AWS_STORAGE_BUCKET_NAME,
+            "access_key": AWS_ACCESS_KEY_ID,
+            "secret_key": AWS_SECRET_ACCESS_KEY,
+            "region_name": AWS_S3_REGION_NAME,
+            "custom_domain": AWS_S3_CUSTOM_DOMAIN,
+            "default_acl": "public-read",
+            "file_overwrite": False,
+            "location": "media",
+        },
+    },
+    "staticfiles": {  # For static files
+        "BACKEND": "storages.backends.s3.S3Storage",
+        "OPTIONS": {
+            "bucket_name": AWS_STORAGE_BUCKET_NAME,
+            "access_key": AWS_ACCESS_KEY_ID,
+            "secret_key": AWS_SECRET_ACCESS_KEY,
+            "region_name": AWS_S3_REGION_NAME,
+            "custom_domain": AWS_S3_CUSTOM_DOMAIN,
+            "default_acl": "public-read",
+            "file_overwrite": True,
+            "location": "static",
+        },
+    },
+}
+
+# URLs for static and media files
+STATIC_URL = f'https://{AWS_S3_CUSTOM_DOMAIN}/static/'
+MEDIA_URL = f'https://{AWS_S3_CUSTOM_DOMAIN}/media/'
+
+# Still needed for collectstatic
+STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
+
+# Additional S3 settings
+AWS_S3_OBJECT_PARAMETERS = {
+    'CacheControl': 'max-age=86400',
+}
+
+AWS_SES_ACCESS_KEY_ID = env('AWS_SES_ACCESS_KEY_ID')
+AWS_SES_SECRET_ACCESS_KEY = env('AWS_SES_SECRET_ACCESS_KEY')
+
+AWS_SES_REGION_NAME = 'us-east-2'
+AWS_SES_REGION_ENDPOINT = 'email.us-east-2.amazonaws.com'
+
+# Logging configuration
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {
+        'verbose': {
+            'format': '{levelname} {asctime} {module} {process:d} {thread:d} {message}',
+            'style': '{',
+        },
+        'simple': {
+            'format': '{levelname} {message}',
+            'style': '{',
+        },
+    },
+    'handlers': {
+        'console': {
+            'class': 'logging.StreamHandler',
+            'formatter': 'verbose',
+        },
+    },
+    'root': {
+        'handlers': ['console'],
+        'level': 'INFO',
+    },
+    'loggers': {
+        'django': {
+            'handlers': ['console'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+        'photomink': {
+            'handlers': ['console'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+    },
+}

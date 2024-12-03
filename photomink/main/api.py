@@ -1,4 +1,4 @@
-from ninja import Router, Schema
+from ninja import Router, Schema, File, Form, UploadedFile
 from ninja.decorators import decorate_view
 from datetime import datetime, timedelta
 from uuid import UUID
@@ -10,17 +10,28 @@ from ninja.errors import HttpError
 from ninja.responses import Response
 from ninja.security import django_auth
 from django.conf import settings
+from ninja.files import UploadedFile
+from django.db import transaction
+from django.core.files.storage import default_storage
+from concurrent.futures import ThreadPoolExecutor
+import logging
+import boto3
+from botocore.exceptions import ClientError
+import uuid
 
 from .models import Workspace, WorkspaceInvitation, ShareLink, WorkspaceMember, Asset
 from .schemas import (
     WorkspaceInviteSchema, ShareLinkSchema, WorkspaceCreateSchema, 
-    WorkspaceDataSchema, WorkspaceUpdateSchema, AssetCreateSchema, 
-    WorkspaceInviteIn, WorkspaceInviteOut, InviteAcceptSchema
+    WorkspaceDataSchema, WorkspaceUpdateSchema, 
+    WorkspaceInviteIn, WorkspaceInviteOut, InviteAcceptSchema,
+    AssetSchema, WorkspaceUpdateForm
 )
-from .utils import send_invitation_email
+from .utils import send_invitation_email, process_file_metadata, process_file_metadata_background, executor
 from .decorators import check_workspace_permission
 
 router = Router(tags=["main"], auth=django_auth)
+
+logger = logging.getLogger(__name__)
 
 
 
@@ -56,22 +67,42 @@ def get_workspace(request, workspace_id: UUID):
     ), id=workspace_id)
     return workspace
 
-@router.put("/workspaces/{workspace_id}", response=WorkspaceDataSchema)
+
+@router.post("/workspaces/{workspace_id}/update", response=WorkspaceDataSchema)
 @decorate_view(check_workspace_permission(WorkspaceMember.Role.ADMIN))
 def update_workspace(
     request, 
-    workspace_id: UUID, 
-    data: WorkspaceUpdateSchema, 
+    workspace_id: UUID,
+    file: UploadedFile = File(...),  # Required file upload
+    name: Optional[str] = Form(None),  # Optional name update
+    description: Optional[str] = Form(None)  # Optional description update
 ):
-    try:
-        workspace = get_object_or_404(Workspace, id=workspace_id)
-        for field, value in data.dict(exclude_unset=True).items():
-            setattr(workspace, field, value)
-        workspace.save()
-        return workspace
-    except HttpError as e:
-        raise e
+    workspace = get_object_or_404(Workspace, id=workspace_id)
     
+    # Handle file upload
+    if file:
+        # Delete old avatar if it exists
+        if workspace.avatar:
+            workspace.avatar.delete(save=False)
+        
+        # Save new avatar to storage
+        file_path = default_storage.save(
+            f'workspaces/{workspace.id}/avatars/{file.name}', 
+            file
+        )
+        
+        # Update workspace with new avatar path
+        workspace.avatar = file_path
+    
+    # Update name and description if provided
+    if name is not None:
+        workspace.name = name
+    if description is not None:
+        workspace.description = description
+    
+    workspace.save()
+    
+    return workspace
 
 @router.delete("/workspaces/{workspace_id}")
 @decorate_view(check_workspace_permission(WorkspaceMember.Role.ADMIN))
@@ -79,47 +110,6 @@ def delete_workspace(request, workspace_id: UUID):
     workspace = get_object_or_404(Workspace, id=workspace_id)
     workspace.delete()
     return {"success": True}
-
-
-
-@router.post("/workspaces/{workspace_id}/settings")
-@decorate_view(check_workspace_permission(WorkspaceMember.Role.ADMIN))
-def update_workspace_settings(
-    request, 
-    workspace_id: UUID, 
-    data: WorkspaceUpdateSchema, 
-    workspace: Any, 
-    member: Any
-):
-    # Update workspace settings...
-    pass
-
-@router.post("/workspaces/{workspace_id}/assets")
-@decorate_view(check_workspace_permission(WorkspaceMember.Role.EDITOR))
-def create_asset(
-    request, 
-    workspace_id: UUID, 
-    data: AssetCreateSchema, 
-    workspace: Any, 
-    member: Any
-):
-    asset = Asset.objects.create(
-        workspace=workspace,
-        created_by=request.user,
-        **data.dict()
-    )
-    return asset
-
-@router.get("/workspaces/{workspace_id}/assets")
-@decorate_view(check_workspace_permission(WorkspaceMember.Role.COMMENTER))
-def list_assets(
-    request, 
-    workspace_id: UUID, 
-    workspace: Any, 
-    member: Any
-):
-    assets = Asset.objects.filter(workspace=workspace)
-    return assets
 
 
 @router.post("/workspaces/{workspace_id}/share")
@@ -241,3 +231,58 @@ def get_invite_info(request, token: str):
         "expires_at": invitation.expires_at
     }
 
+
+@router.post("/workspaces/{workspace_id}/assets", response=AssetSchema)
+@decorate_view(check_workspace_permission(WorkspaceMember.Role.EDITOR))
+def create_asset(
+    request, 
+    workspace_id: UUID,
+    file: UploadedFile = File(...),
+):
+    workspace = get_object_or_404(Workspace, id=workspace_id)
+    
+    # Create asset with initial status
+    with transaction.atomic():
+        asset = Asset.objects.create(
+            workspace=workspace,
+            created_by=request.user,
+            file=file,
+            status=Asset.Status.PROCESSING,
+            size=file.size,
+        )
+        
+        # Save file to storage
+        file_path = default_storage.save(
+            f'workspaces/{workspace_id}/assets/{asset.id}/{file.name}', 
+            file
+        )
+        
+        # Submit background task
+        executor.submit(
+            process_file_metadata_background,
+            asset_id=asset.id,
+            file_path=file_path,
+            user=request.user
+        )
+    
+    return asset
+
+@router.get("/workspaces/{workspace_id}/assets/{asset_id}", response=AssetSchema)
+@decorate_view(check_workspace_permission(WorkspaceMember.Role.COMMENTER))
+def get_asset(request, workspace_id: UUID, asset_id: UUID):
+    asset = get_object_or_404(
+        Asset.objects.filter(workspace_id=workspace_id),
+        id=asset_id
+    )
+    return asset
+
+@router.get("/workspaces/{workspace_id}/assets")
+@decorate_view(check_workspace_permission(WorkspaceMember.Role.COMMENTER))
+def list_assets(
+    request, 
+    workspace_id: UUID, 
+    workspace: Any, 
+    member: Any
+):
+    assets = Asset.objects.filter(workspace=workspace)
+    return assets

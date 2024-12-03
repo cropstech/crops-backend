@@ -1,11 +1,16 @@
 from django.contrib import admin
-from photomink.main.models import Workspace, WorkspaceMember
+from photomink.main.models import Workspace, WorkspaceMember, Asset
 
 # Register your models here.
 
+class WorkspaceMemberInline(admin.TabularInline):
+    model = WorkspaceMember
+    extra = 1
+    
 class WorkspaceAdmin(admin.ModelAdmin):
-    list_display = ('name', 'created_at', 'updated_at')
-    search_fields = ['name',]
+    list_display = ('name', 'id', 'created_at', 'updated_at')
+    search_fields = ['name', 'id']
+    inlines = [WorkspaceMemberInline]
 
 class RoleAdmin(admin.ModelAdmin):
     list_display = ('name', 'workspace', 'is_custom')
@@ -14,7 +19,13 @@ class RoleAdmin(admin.ModelAdmin):
 class WorkspaceMemberAdmin(admin.ModelAdmin):
     list_display = ('user__email', 'user__last_name', 'workspace', 'role', 'joined_at')
     search_fields = ['user__email', 'user__last_name', 'workspace__name']
+    
+class AssetAdmin(admin.ModelAdmin):
+    list_display = ('name', 'id', 'workspace', 'status', 'date_created', 'date_modified', 'date_uploaded')
+    search_fields = ['name', 'id', 'workspace__name']
+    ordering = ['-date_uploaded']
+    readonly_fields = ('id', 'date_modified', 'date_uploaded')
 
 admin.site.register(Workspace, WorkspaceAdmin)
 admin.site.register(WorkspaceMember, WorkspaceMemberAdmin)
-
+admin.site.register(Asset, AssetAdmin)
