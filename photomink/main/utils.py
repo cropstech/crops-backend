@@ -19,6 +19,10 @@ from django.core.files.storage import default_storage
 from concurrent.futures import ThreadPoolExecutor
 from photomink.main.models import Asset
 from uuid import UUID
+from tempfile import NamedTemporaryFile
+import logging
+
+logger = logging.getLogger(__name__)
 
 class FileMetadata(Schema):
     name: str
@@ -204,13 +208,26 @@ def process_file_metadata(file_or_path, user) -> FileMetadata:
 
 def process_file_metadata_background(asset_id: UUID, file_path: str, user) -> None:
     """
-    Background processing function
+    Background processing function for S3-stored files
     """
     try:
         asset = Asset.objects.get(id=asset_id)
-        file_metadata = process_file_metadata(file_path, user)
         
-        # Update searchable fields
+        # Create a temporary file to process the metadata
+        with default_storage.open(file_path, 'rb') as remote_file:
+            # Create a temporary file
+            with NamedTemporaryFile(delete=False) as temp_file:
+                # Copy the remote file to a temporary local file
+                temp_file.write(remote_file.read())
+                temp_file.flush()
+                
+                # Process the metadata using the temporary file
+                file_metadata = process_file_metadata(temp_file.name, user)
+            
+            # Clean up the temporary file
+            os.unlink(temp_file.name)
+        
+        # Update asset with metadata
         asset.file_type = file_metadata.file_type
         asset.mime_type = file_metadata.mime_type
         asset.file_extension = file_metadata.file_extension
@@ -220,12 +237,13 @@ def process_file_metadata_background(asset_id: UUID, file_path: str, user) -> No
             asset.height = file_metadata.dimensions[1]
         
         asset.duration = file_metadata.duration
-        asset.metadata = file_metadata.metadata  # Store remaining metadata as JSON
+        asset.metadata = file_metadata.metadata
         asset.status = Asset.Status.COMPLETED
         
         asset.save()
         
     except Exception as e:
+        logger.exception(f"Error processing file metadata for asset {asset_id}: {str(e)}")
         asset = Asset.objects.get(id=asset_id)
         asset.status = Asset.Status.FAILED
         asset.processing_error = str(e)
