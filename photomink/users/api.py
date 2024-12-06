@@ -18,12 +18,22 @@ from django.http import JsonResponse
 from http import HTTPStatus
 from ninja.responses import Response
 from typing import List
+import logging
+from photomink.main.models import WorkspaceInvitation
+from photomink.main.utils import accept_invitation
+
+logger = logging.getLogger(__name__)
 
 router = Router(tags=["users"])
 
 class SignInSchema(BaseModel):
     email: str
     password: str
+    
+class SignUpSchema(BaseModel):
+    email: str
+    password: str
+    invite_token: Optional[str] = None
 
 class ResendVerificationSchema(BaseModel):
     email: str
@@ -218,14 +228,17 @@ def login_view(request, payload: SignInSchema):
             )
 
         if not user.email_verified:
-            return ApiResponse.error(
-                message="Email not verified",
-                errors=[{
-                    "code": "email_unverified",
-                    "message": "Please verify your email first"
-                }],
-                data={"email": user.email},
-                status_code=HTTPStatus.FORBIDDEN  # 403
+            login(request, user)  # Log them in anyway
+            return ApiResponse.success(
+                message="Login successful but email needs verification",
+                data={
+                    "email": user.email,
+                    "username": user.username,
+                    "needs_verification": True
+                },
+                meta={
+                    "redirect_to": "/verify-email"  # Frontend can use this to redirect
+                }
             )
         
         login(request, user)
@@ -235,7 +248,8 @@ def login_view(request, payload: SignInSchema):
             message="Login successful",
             data={
                 "email": user.email,
-                "username": user.username
+                "username": user.username,
+                "needs_verification": False
             }
         )
 
@@ -250,6 +264,7 @@ def login_view(request, payload: SignInSchema):
         )
 
 @router.post("/logout", 
+    auth=None,
     response={
         200: ApiResponseSchema,
         401: ApiResponseSchema
@@ -296,8 +311,9 @@ def get_user(request):
     )
 
 @router.post("/register",
+    auth=None,
     response={
-        201: ApiResponseSchema,
+        200: ApiResponseSchema,
         400: ApiResponseSchema,
         409: ApiResponseSchema,
         500: ApiResponseSchema
@@ -305,7 +321,7 @@ def get_user(request):
     summary="User registration",
     description="Register a new user account"
 )
-def register(request, payload: SignInSchema):
+def register(request, payload: SignUpSchema):
     """
     Register a new user
     
@@ -323,8 +339,7 @@ def register(request, payload: SignInSchema):
                 errors=[{
                     "code": "invalid_email",
                     "message": "Please provide a valid email address"
-                }],
-                status_code=HTTPStatus.BAD_REQUEST
+                }]
             )
 
         # Check if email already exists
@@ -334,32 +349,68 @@ def register(request, payload: SignInSchema):
                 errors=[{
                     "code": "email_exists",
                     "message": "This email is already registered"
-                }],
-                status_code=HTTPStatus.CONFLICT
+                }]
             )
+        
+        verified = False
+        if payload.invite_token:
+            try:
+                # Check if invite token is valid
+                invitation = WorkspaceInvitation.objects.get(token=payload.invite_token)
+                if invitation.email == payload.email:
+                    verified = True
+            except WorkspaceInvitation.DoesNotExist:
+                # Continue with registration even if invitation is not found
+                pass
             
-        # Create user if validation passes
+        # Create user
         user = User.objects.create_user(
             username=payload.email, 
             email=payload.email, 
-            password=payload.password
+            password=payload.password,
+            email_verified=verified
         )
+        logger.info(f"User created: {user.email}")
+        logger.info(f"Invite token: {payload.invite_token}")
+        logger.info(f"Verified: {verified}")
         
-        # Send verification email
-        send_verification_email(user)
+        # Handle invitation after user creation
+        if payload.invite_token:
+            try:
+                logger.info(f"Accepting invitation: {payload.invite_token}")
+                accept_invitation(payload.invite_token, user)
+            except Exception as e:
+                logger.error(f"Error accepting invitation: {str(e)}")
+                # Continue with registration even if invitation acceptance fails
         
-        return ApiResponse(
-            status="success",
-            message="User registered successfully. Please check your email to verify your account."
-        ).dict()
-    except Exception as e:
-        return ApiResponse(
-            status="error",
-            message="An error occurred",
-            errors={"detail": str(e)}
-        ).dict()
+        # Send verification email unless already verified
+        if not verified:
+            send_verification_email(user)
+        
+        # Log the user in after registration
+        login(request, user)
+        
+        return ApiResponse.success(
+            message="User registered successfully. Please check your email to verify your account.",
+            data={
+                "email": user.email,
+                "username": user.username,
+                "needs_verification": not verified
+            }
+        )
 
-@router.get("/verify-email/{token}",
+    except Exception as e:
+        logger.error(f"Registration error: {str(e)}")
+        return ApiResponse.error(
+            message="An error occurred during registration",
+            errors=[{
+                "code": "registration_error",
+                "message": str(e)
+            }]
+        )
+
+@router.post("/verify-email/{token}",
+    auth=None,
     response={
         200: ApiResponseSchema,
         400: ApiResponseSchema,
@@ -378,6 +429,7 @@ def verify_email(request, token: str):
     * 404: Invalid token
     """
     try:
+        logger.info(f"Verifying email with token: {token}")
         user = User.objects.get(verification_token=token)
         
         if not user.is_verification_token_valid():

@@ -30,6 +30,37 @@ class WorkspaceUpdateForm(Schema):
     name: Optional[str] = None
     description: Optional[str] = None
 
+class WorkspaceMemberSchema(Schema):
+    id: int
+    user_id: int
+    role: str
+    joined_at: datetime
+    name: str
+    email: str
+    
+    model_config = ConfigDict(
+        from_attributes=True
+    )
+
+    @staticmethod
+    def resolve_id(obj):
+        return str(obj.id)
+    
+    @staticmethod
+    def resolve_user_id(obj):
+        return str(obj.user.id)
+
+    @staticmethod
+    def resolve_name(obj):
+        return obj.user.get_full_name() or obj.user.username or obj.user.email
+        
+    @staticmethod
+    def resolve_email(obj):
+        return obj.user.email
+
+class WorkspaceMemberUpdateSchema(Schema):
+    role: str
+
 class WorkspaceInviteSchema(Schema):
     email: str
     role: str
@@ -50,8 +81,11 @@ class WorkspaceInviteIn(Schema):
     expires_at: Optional[datetime] = None
 
 class WorkspaceInviteOut(Schema):
-    id: UUID
+    id: int
     token: UUID
+    email: str
+    role: str
+    expires_at: datetime
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
 class InviteAcceptSchema(Schema):

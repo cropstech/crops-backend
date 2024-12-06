@@ -24,9 +24,10 @@ from .schemas import (
     WorkspaceInviteSchema, ShareLinkSchema, WorkspaceCreateSchema, 
     WorkspaceDataSchema, WorkspaceUpdateSchema, 
     WorkspaceInviteIn, WorkspaceInviteOut, InviteAcceptSchema,
-    AssetSchema, WorkspaceUpdateForm
+    AssetSchema, WorkspaceUpdateForm, WorkspaceMemberUpdateSchema,
+    WorkspaceMemberSchema,
 )
-from .utils import send_invitation_email, process_file_metadata, process_file_metadata_background, executor
+from .utils import send_invitation_email, process_file_metadata, process_file_metadata_background, executor, accept_invitation
 from .decorators import check_workspace_permission
 
 router = Router(tags=["main"], auth=django_auth)
@@ -112,6 +113,35 @@ def delete_workspace(request, workspace_id: UUID):
     return {"success": True}
 
 
+# Get workspace members
+@router.get("/workspaces/{workspace_id}/members", response=List[WorkspaceMemberSchema])
+@decorate_view(check_workspace_permission(WorkspaceMember.Role.ADMIN))
+def get_workspace_members(request, workspace_id: UUID):
+    workspace = get_object_or_404(Workspace, id=workspace_id)
+    members = workspace.workspacemember_set.select_related('user', 'workspace').all()
+    print(members)
+    return list(members)
+
+# Update workspace member role
+@router.post("/workspaces/{workspace_id}/members/{member_id}/update")
+@decorate_view(check_workspace_permission(WorkspaceMember.Role.ADMIN))
+def update_workspace_member_role(request, workspace_id: UUID, member_id: UUID, data: WorkspaceMemberUpdateSchema):
+    workspace = get_object_or_404(Workspace, id=workspace_id)
+    member = get_object_or_404(WorkspaceMember, id=member_id)
+    member.role = data.role
+    member.save()
+    return member
+
+# Delete workspace member
+@router.delete("/workspaces/{workspace_id}/members/{member_id}")
+@decorate_view(check_workspace_permission(WorkspaceMember.Role.ADMIN))
+def delete_workspace_member(request, workspace_id: UUID, member_id: UUID):
+    member = get_object_or_404(WorkspaceMember, id=member_id)
+    member.delete()
+    return {"success": True}
+
+
+
 @router.post("/workspaces/{workspace_id}/share")
 @decorate_view(check_workspace_permission(WorkspaceMember.Role.EDITOR))
 def create_share_link(
@@ -158,6 +188,8 @@ def access_shared_content(request, token: str):
 @router.post("/workspaces/{workspace_id}/invites", response=WorkspaceInviteOut)
 @decorate_view(check_workspace_permission(WorkspaceMember.Role.ADMIN))
 def create_workspace_invite(request, workspace_id: UUID, data: WorkspaceInviteSchema):
+    workspace = get_object_or_404(Workspace, id=workspace_id)
+
     invitation = WorkspaceInvitation.objects.create(
         workspace=workspace,
         email=data.email,
@@ -168,35 +200,11 @@ def create_workspace_invite(request, workspace_id: UUID, data: WorkspaceInviteSc
     
     send_invitation_email(invitation)
     
-    return {
-        "id": invitation.id,
-        "token": invitation.token
-    }
+    return invitation
 
 @router.post("/invites/accept")
 def accept_workspace_invite(request, data: InviteAcceptSchema):
-    invitation = get_object_or_404(WorkspaceInvitation, token=data.token)
-    
-    if invitation.status != 'PENDING':
-        raise HttpError(400, "This invitation has already been used or expired")
-    
-    if invitation.expires_at < timezone.now():
-        invitation.status = 'EXPIRED'
-        invitation.save()
-        raise HttpError(400, "This invitation has expired")
-    
-    if WorkspaceMember.objects.filter(workspace=invitation.workspace, user=request.user).exists():
-        raise HttpError(400, "You are already a member of this workspace")
-    
-    WorkspaceMember.objects.create(
-        workspace=invitation.workspace,
-        user=request.user,
-        role=invitation.role,
-        invited_by=invitation.invited_by
-    )
-    
-    invitation.status = 'ACCEPTED'
-    invitation.save()
+    invitation = accept_invitation(data.token, request.user)
     
     return Response({
         "workspace_id": str(invitation.workspace.id),
@@ -204,7 +212,7 @@ def accept_workspace_invite(request, data: InviteAcceptSchema):
         "message": "Successfully joined workspace"
     }, status=200)
 
-@router.get("/invites/{token}/info")
+@router.get("/invites/{token}/info", auth=None)
 def get_invite_info(request, token: str):
     invitation = get_object_or_404(WorkspaceInvitation, token=token)
     
@@ -228,6 +236,7 @@ def get_invite_info(request, token: str):
             "email": invitation.invited_by.email
         },
         "role": invitation.role,
+        "email": invitation.email,
         "expires_at": invitation.expires_at
     }
 

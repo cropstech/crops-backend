@@ -20,7 +20,7 @@
     <p>{{ invited_by }} has invited you to join {{ workspace_name }} as a {{ role }}.</p>
     
     <p>
-        <a href="{{ accept_url }}" class="button">Accept Invitation</a>
+        <a href={{ accept_url }} class="button" target="_blank">Accept Invitation</a>
     </p>
     
     <p>This invitation will expire on {{ expires_at|date:"F j, Y" }}.</p>

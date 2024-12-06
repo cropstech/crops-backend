@@ -21,6 +21,10 @@ from photomink.main.models import Asset
 from uuid import UUID
 from tempfile import NamedTemporaryFile
 import logging
+from django.utils import timezone
+from ninja.errors import HttpError
+from django.shortcuts import get_object_or_404
+from .models import WorkspaceInvitation, WorkspaceMember
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +49,7 @@ def send_invitation_email(invitation):
         'workspace_name': invitation.workspace.name,
         'invited_by': invitation.invited_by.get_full_name() or invitation.invited_by.email,
         'role': invitation.get_role_display(),
-        'accept_url': f"{settings.FRONTEND_URL}/invites/{invitation.token}",
+        'accept_url': f"{settings.FRONTEND_URL}/invite/{invitation.token}",
         'expires_at': invitation.expires_at,
     }
     
@@ -54,7 +58,7 @@ def send_invitation_email(invitation):
     plain_message = f"""
     You've been invited to join {invitation.workspace.name} by {invitation.invited_by.get_full_name() or invitation.invited_by.email}.
     Role: {invitation.get_role_display()}
-    Click here to accept: {settings.FRONTEND_URL}/invites/{invitation.token}
+    Click here to accept: {settings.FRONTEND_URL}/invite/{invitation.token}
     This invitation expires on {invitation.expires_at}
     """
     
@@ -251,3 +255,28 @@ def process_file_metadata_background(asset_id: UUID, file_path: str, user) -> No
 
 # Create a thread pool executor
 executor = ThreadPoolExecutor(max_workers=3)
+
+def accept_invitation(token, user):
+    invitation = get_object_or_404(WorkspaceInvitation, token=token)
+    
+    if invitation.status != 'PENDING':
+        raise HttpError(400, "This invitation has already been used or expired")
+    
+    if invitation.expires_at < timezone.now():
+        invitation.status = 'EXPIRED'
+        invitation.save()
+        raise HttpError(400, "This invitation has expired")
+    
+    if WorkspaceMember.objects.filter(workspace=invitation.workspace, user=user).exists():
+        raise HttpError(400, "You are already a member of this workspace")
+    
+    WorkspaceMember.objects.create(
+        workspace=invitation.workspace,
+        user=user,
+        role=invitation.role,
+        invited_by=invitation.invited_by
+    )
+    
+    invitation.status = 'ACCEPTED'
+    invitation.save()
+    return invitation

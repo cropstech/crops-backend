@@ -1,6 +1,9 @@
 from django.core.mail import send_mail
 from django.conf import settings
 from django.utils import timezone
+import logging
+
+logger = logging.getLogger(__name__)
 
 def get_client_ip(request):
     """
@@ -13,6 +16,7 @@ def get_client_ip(request):
     return request.META.get('REMOTE_ADDR')
 
 def send_verification_email(user):
+    logger.info(f"Sending verification email to {user.email}")
     if not user.can_send_verification_email():
         time_diff = timezone.now() - user.last_verification_email_sent
         wait_time = 24 - (time_diff.total_seconds() / 3600)
@@ -58,8 +62,8 @@ def send_email_change_verification(user, new_email):
     verification_url = f"{settings.FRONTEND_URL}/verify-email-change/{token}"
     
     send_mail(
-        'Verify your new email',
-        f'Click this link to verify your new email address: {verification_url}\n'
+        'Verify your new email\n\n',
+        f'Click this link to verify your new email address: {verification_url}\n\n'
         f'This link will expire in 24 hours.',
         settings.DEFAULT_FROM_EMAIL,
         [new_email],

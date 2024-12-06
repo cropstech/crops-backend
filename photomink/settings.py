@@ -26,7 +26,7 @@ env = environ.Env(
     # set casting, default value
     DJANGO_DEBUG=(bool, False),
     ALLOWED_HOSTS=(list, ['127.0.0.1', 'localhost']),
-    FRONTEND_URL=(str, 'https://localhost:9100/'),
+    FRONTEND_URL=(str, 'https://localhost:9100'),
     STATIC_URL=(str, 'https://assetia.s3.us-east-2.amazonaws.com/static/'),
     AWS_S3_CUSTOM_DOMAIN=(str, 'assetia.s3.us-east-2.amazonaws.com'),
     AWS_STORAGE_BUCKET_NAME=(str, 'assetia'),
