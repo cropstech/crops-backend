@@ -2,7 +2,7 @@ from ninja import Schema
 from typing import List, Optional
 from datetime import datetime
 from uuid import UUID
-from pydantic import ConfigDict
+from pydantic import ConfigDict, BaseModel, Field
 
 class WorkspaceCreateSchema(Schema):
     name: str
@@ -16,6 +16,7 @@ class WorkspaceDataSchema(Schema):
     description: Optional[str] = None
     created_at: datetime
     updated_at: datetime
+    user_role: Optional[str] = None
 
     @staticmethod
     def resolve_id(obj):
@@ -82,12 +83,14 @@ class WorkspaceInviteIn(Schema):
 
 class WorkspaceInviteOut(Schema):
     id: int
-    token: UUID
     email: str
     role: str
     expires_at: datetime
-    model_config = ConfigDict(arbitrary_types_allowed=True)
-
+    
+    model_config = ConfigDict(
+        from_attributes=True
+    )
+    
 class InviteAcceptSchema(Schema):
     token: str
     

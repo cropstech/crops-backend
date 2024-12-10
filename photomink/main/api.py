@@ -66,6 +66,8 @@ def get_workspace(request, workspace_id: UUID):
     workspace = get_object_or_404(Workspace.objects.filter(
         workspacemember__user=request.user
     ), id=workspace_id)
+    member = WorkspaceMember.objects.get(workspace=workspace, user=request.user)
+    workspace.user_role = member.role
     return workspace
 
 
@@ -115,7 +117,7 @@ def delete_workspace(request, workspace_id: UUID):
 
 # Get workspace members
 @router.get("/workspaces/{workspace_id}/members", response=List[WorkspaceMemberSchema])
-@decorate_view(check_workspace_permission(WorkspaceMember.Role.ADMIN))
+@decorate_view(check_workspace_permission(WorkspaceMember.Role.COMMENTER))
 def get_workspace_members(request, workspace_id: UUID):
     workspace = get_object_or_404(Workspace, id=workspace_id)
     members = workspace.workspacemember_set.select_related('user', 'workspace').all()
@@ -123,11 +125,22 @@ def get_workspace_members(request, workspace_id: UUID):
     return list(members)
 
 # Update workspace member role
-@router.post("/workspaces/{workspace_id}/members/{member_id}/update")
+@router.put("/workspaces/{workspace_id}/members/{member_id}", response=WorkspaceMemberSchema)
 @decorate_view(check_workspace_permission(WorkspaceMember.Role.ADMIN))
-def update_workspace_member_role(request, workspace_id: UUID, member_id: UUID, data: WorkspaceMemberUpdateSchema):
+def update_workspace_member_role(request, workspace_id: UUID, member_id: int, data: WorkspaceMemberUpdateSchema):
     workspace = get_object_or_404(Workspace, id=workspace_id)
     member = get_object_or_404(WorkspaceMember, id=member_id)
+    
+    # Check if this is the last admin
+    if member.role == WorkspaceMember.Role.ADMIN and data.role != WorkspaceMember.Role.ADMIN:
+        admin_count = WorkspaceMember.objects.filter(
+            workspace=workspace,
+            role=WorkspaceMember.Role.ADMIN
+        ).count()
+        
+        if admin_count <= 1:
+            raise HttpError(400, "Cannot change role of the only admin")
+    
     member.role = data.role
     member.save()
     return member
@@ -201,6 +214,34 @@ def create_workspace_invite(request, workspace_id: UUID, data: WorkspaceInviteSc
     send_invitation_email(invitation)
     
     return invitation
+
+@router.get("/workspaces/{workspace_id}/invites", response=List[WorkspaceInviteOut])
+@decorate_view(check_workspace_permission(WorkspaceMember.Role.COMMENTER))
+def get_workspace_invites(request, workspace_id: UUID):
+    workspace = get_object_or_404(Workspace, id=workspace_id)
+    invites = WorkspaceInvitation.objects.filter(
+        workspace=workspace,
+        status='PENDING'
+    ).order_by('-created_at')
+    
+    # Convert each invite to a WorkspaceInviteOut instance
+    return invites
+
+@router.delete("/workspaces/{workspace_id}/invites/{invite_id}")
+@decorate_view(check_workspace_permission(WorkspaceMember.Role.ADMIN))
+def cancel_workspace_invite(request, workspace_id: UUID, invite_id: int):
+    workspace = get_object_or_404(Workspace, id=workspace_id)
+    invitation = get_object_or_404(
+        WorkspaceInvitation,
+        id=invite_id,
+        workspace=workspace,
+        status='PENDING'
+    )
+    
+    invitation.status = 'CANCELLED'
+    invitation.save()
+    
+    return {"success": True}
 
 @router.post("/invites/accept")
 def accept_workspace_invite(request, data: InviteAcceptSchema):
@@ -295,3 +336,4 @@ def list_assets(
 ):
     assets = Asset.objects.filter(workspace=workspace)
     return assets
+

@@ -83,7 +83,7 @@ class WorkspaceInvitation(models.Model):
     workspace = models.ForeignKey(Workspace, on_delete=models.CASCADE)
     email = models.EmailField()
     role = models.CharField(max_length=20, choices=WorkspaceMember.Role.choices)
-    invited_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
+    invited_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, null=True, blank=True)
     token = models.UUIDField(default=uuid.uuid4, editable=False)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='PENDING')
     created_at = models.DateTimeField(auto_now_add=True)
