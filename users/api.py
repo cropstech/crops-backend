@@ -19,8 +19,8 @@ from http import HTTPStatus
 from ninja.responses import Response
 from typing import List
 import logging
-from photomink.main.models import WorkspaceInvitation
-from photomink.main.utils import accept_invitation
+from main.models import WorkspaceInvitation
+from main.utils import accept_invitation
 
 logger = logging.getLogger(__name__)
 

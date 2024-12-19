@@ -1,7 +1,6 @@
 from ninja import NinjaAPI
-from photomink.users.api import router as users_router
-from photomink.background_remover.api import router as background_remover_router
-from photomink.main.api import router as main_router
+from users.api import router as users_router
+from main.api import router as main_router
 from django.core.exceptions import ObjectDoesNotExist
 from ninja.security import django_auth
 

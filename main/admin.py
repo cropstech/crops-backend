@@ -1,5 +1,5 @@
 from django.contrib import admin
-from photomink.main.models import Workspace, WorkspaceMember, Asset
+from main.models import Workspace, WorkspaceMember, Asset
 
 # Register your models here.
 

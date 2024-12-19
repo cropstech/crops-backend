@@ -17,7 +17,11 @@ from django.contrib import admin
 from django.urls import path
 from .api import api
 
+from django_paddle_billing.urls import urlpatterns as paddle_billing_urls
+
+
 urlpatterns = [
     path('admin/', admin.site.urls),
     path("api/v1/", api.urls),
 ]
+urlpatterns += paddle_billing_urls

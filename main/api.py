@@ -18,7 +18,9 @@ import logging
 import boto3
 from botocore.exceptions import ClientError
 import uuid
-
+from django.core.exceptions import PermissionDenied, ValidationError
+from paddle_billing_client.client import PaddleApiClient
+from apiclient import HeaderAuthentication
 from .models import Workspace, WorkspaceInvitation, ShareLink, WorkspaceMember, Asset
 from .schemas import (
     WorkspaceInviteSchema, ShareLinkSchema, WorkspaceCreateSchema, 
@@ -26,9 +28,13 @@ from .schemas import (
     WorkspaceInviteIn, WorkspaceInviteOut, InviteAcceptSchema,
     AssetSchema, WorkspaceUpdateForm, WorkspaceMemberUpdateSchema,
     WorkspaceMemberSchema,
+    ProductSubscriptionSchema,
+    PlanOut,
 )
 from .utils import send_invitation_email, process_file_metadata, process_file_metadata_background, executor, accept_invitation
 from .decorators import check_workspace_permission
+from django_paddle_billing.models import Product, Subscription, Price, paddle_client
+from paddle_billing_client.models.subscription import SubscriptionRequest
 
 router = Router(tags=["main"], auth=django_auth)
 
@@ -148,12 +154,40 @@ def update_workspace_member_role(request, workspace_id: UUID, member_id: int, da
 # Delete workspace member
 @router.delete("/workspaces/{workspace_id}/members/{member_id}")
 @decorate_view(check_workspace_permission(WorkspaceMember.Role.ADMIN))
-def delete_workspace_member(request, workspace_id: UUID, member_id: UUID):
+def delete_workspace_member(request, workspace_id: UUID, member_id: int):
     member = get_object_or_404(WorkspaceMember, id=member_id)
+    
+    # Check if this is the last admin
+    if member.role == WorkspaceMember.Role.ADMIN:
+        admin_count = WorkspaceMember.objects.filter(
+            workspace=member.workspace,
+            role=WorkspaceMember.Role.ADMIN
+        ).count()
+        
+        if admin_count <= 1:
+            raise HttpError(400, "Cannot remove the only admin from the workspace")
+    
     member.delete()
     return {"success": True}
 
+@router.get("/workspaces/{workspace_id}/subscription")
+def get_subscription(request, workspace_id: UUID):
+    logger.info(f"Getting subscription for workspace {workspace_id}")
+    workspace = get_object_or_404(Workspace, id=workspace_id)
+    workspace_subscription = workspace.subscription
+    logger.info(f"Subscription: {workspace_subscription}")
 
+    if not workspace_subscription:
+        return {
+            "status": "no_subscription",
+            "plan": "free"
+        }
+    
+    return {
+        "status": workspace_subscription.status,
+        "plan": workspace_subscription.products.first().name,
+        "next_bill_date": workspace_subscription.data.get('next_billed_at')
+    }
 
 @router.post("/workspaces/{workspace_id}/share")
 @decorate_view(check_workspace_permission(WorkspaceMember.Role.EDITOR))
@@ -336,4 +370,140 @@ def list_assets(
 ):
     assets = Asset.objects.filter(workspace=workspace)
     return assets
+
+@router.get("/products", response=ProductSubscriptionSchema)
+def products(request, workspace_id: str):
+    products = Product.objects.values(
+        "id", "name", "description", "created_at", "updated_at", "status"
+    )
+    subscriptions = Subscription.objects.filter(
+        account_id=workspace_id
+    ).prefetch_related("products").all()
+    
+    return {
+        "products": list(products),
+        "subscriptions": list(subscriptions)
+    }
+
+@router.get("/subscriptions/plans", response=List[PlanOut])
+def get_subscription_plans(request):
+    """Get all active subscription plans with their prices"""
+    products = Product.objects.filter(
+        status='active'
+    ).prefetch_related('prices')
+    
+    plans = []
+    for product in products:
+        price = product.prices.first()  # Get first price for the product
+        if price:
+            data = price.get_data()  # Get the Paddle price data
+            product_data = product.get_data()  # Get the Paddle product data
+            
+            # Get billing period from billing_cycle
+            billing_period = None
+            if data and data.billing_cycle:
+                billing_period = data.billing_cycle.interval
+
+            plans.append({
+                "id": str(product.id),
+                "name": product.name,
+                "description": product_data.description if product_data else None,
+                "price_id": str(price.id),
+                "unit_price": float(data.unit_price.amount) if data and data.unit_price else 0,
+                "billing_period": billing_period,
+                "features": product.custom_data.get('features', []) if product.custom_data else []
+            })
+    
+    return plans
+
+@router.post("/workspaces/{workspace_id}/subscription/cancel/{subscription_id}")
+@decorate_view(check_workspace_permission(WorkspaceMember.Role.ADMIN))
+def cancel_subscription(request, workspace_id: UUID, subscription_id: str):
+    workspace = get_object_or_404(Workspace, id=workspace_id)
+    
+    try:
+        subscription = Subscription.objects.get(id=subscription_id)
+        
+        if not subscription:
+            raise ValidationError("No matching subscription found")
+        request_data = SubscriptionRequest(effective_from="next_billing_period")
+
+        # Cancel the subscription through Paddle        
+        response = paddle_client.cancel_subscription(
+            subscription_id=subscription_id,
+            data=request_data
+        )
+        
+        logger.info(f"Subscription {subscription.id} cancelled successfully: {response}")
+        return {"message": "Subscription cancelled successfully"}
+        
+    except Exception as e:
+        logger.error(f"Error cancelling subscription: {str(e)}")
+        raise ValidationError("Failed to cancel subscription")
+
+class SubscriptionItemSchema(Schema):
+    price_id: str
+    quantity: int = 1
+
+class UpdateSubscriptionSchema(Schema):
+    items: List[SubscriptionItemSchema]
+    proration_billing_mode: str = "prorated_immediately"
+
+@router.post("/workspaces/{workspace_id}/subscription/{subscription_id}/preview")
+@decorate_view(check_workspace_permission(WorkspaceMember.Role.ADMIN))
+def preview_subscription_update(
+    request, 
+    workspace_id: UUID, 
+    subscription_id: str,
+    new_plan_price_id: str
+):
+    """Preview subscription update before confirming"""
+    
+    try:
+        # Create subscription request
+        subscription_data = SubscriptionRequest(
+            items=[{"price_id": new_plan_price_id, "quantity": 1}],
+            proration_billing_mode="prorated_immediately"
+        )
+        
+        # Get preview from Paddle
+        preview = paddle_client.preview_update_subscription(
+            subscription_id=subscription_id,
+            data=subscription_data
+        )
+        
+        return preview
+        
+    except Exception as e:
+        logger.error(f"Error previewing subscription update: {str(e)}")
+        raise ValidationError("Failed to preview subscription update")
+
+@router.post("/workspaces/{workspace_id}/subscription/{subscription_id}/update")
+@decorate_view(check_workspace_permission(WorkspaceMember.Role.ADMIN))
+def update_subscription(
+    request, 
+    workspace_id: UUID, 
+    subscription_id: str,
+    new_plan_price_id: str
+):
+    """Confirm and apply subscription update"""
+    try:
+        # Create subscription request
+        subscription_data = SubscriptionRequest(
+            items=[{"price_id": new_plan_price_id, "quantity": 1}],
+            proration_billing_mode="prorated_immediately"
+        )
+        
+        # Get preview from Paddle
+        response = paddle_client.update_subscription(
+            subscription_id=subscription_id,
+            data=subscription_data
+        )
+        
+        logger.info(f"Subscription {subscription_id} updated successfully: {response}")
+        return {"message": "Subscription updated successfully"}
+        
+    except Exception as e:
+        logger.error(f"Error updating subscription: {str(e)}")
+        raise ValidationError("Failed to update subscription")
 

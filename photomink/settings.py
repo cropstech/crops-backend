@@ -57,10 +57,11 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
-    'photomink.users',
-    'photomink.main',
+    'users',
+    'main',
     'corsheaders',
     'storages',
+    'django_paddle_billing',
 ]
 
 MIDDLEWARE = [
@@ -292,4 +293,24 @@ LOGGING = {
             'propagate': False,
         },
     },
+}
+
+# Paddle settings
+PADDLE_BILLING = {
+    "PADDLE_API_TOKEN": "201a8cbacc939c12b0ab1d8081328c9bb88225b7083a7773f8",
+    "PADDLE_CLIENT_TOKEN": "test_34ca2eb36d839ee175886c786bf",
+    "PADDLE_SECRET_KEY": "pdl_ntfset_01jex126nkg38bw06cnsqadjpj_6ujiQHJQ/Y63I2jwC0wD/nG0q7WuFPdU",
+    "PADDLE_API_URL": "https://sandbox-api.paddle.com",
+    "PADDLE_IPS": ["34.232.58.13", "34.195.105.136", "34.237.3.244", "35.155.119.135", "52.11.166.252", "34.212.5.7"],
+    "PADDLE_SANDBOX_IPS": [
+        "34.194.127.46",
+        "54.234.237.108",
+        "3.208.120.145",
+        "44.226.236.210",
+        "44.241.183.62",
+        "100.20.172.113",
+    ],
+    "PADDLE_SANDBOX": True,
+    "PADDLE_ACCOUNT_MODEL": "users.CustomUser",
+    "ADMIN_READONLY": True,
 }

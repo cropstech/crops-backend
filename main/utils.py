@@ -17,7 +17,7 @@ from typing import Optional
 import asyncio
 from django.core.files.storage import default_storage
 from concurrent.futures import ThreadPoolExecutor
-from photomink.main.models import Asset
+from main.models import Asset
 from uuid import UUID
 from tempfile import NamedTemporaryFile
 import logging

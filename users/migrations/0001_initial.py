@@ -2,7 +2,7 @@
 
 import django.contrib.auth.validators
 import django.utils.timezone
-import photomink.users.fields
+import users.fields
 from django.db import migrations, models
 
 
@@ -27,7 +27,7 @@ class Migration(migrations.Migration):
                 ('date_joined', models.DateTimeField(default=django.utils.timezone.now, verbose_name='date joined')),
                 ('first_name', models.TextField()),
                 ('last_name', models.TextField()),
-                ('email', photomink.users.fields.LowercaseEmailField(max_length=254, unique=True, verbose_name='email address')),
+                ('email', users.fields.LowercaseEmailField(max_length=254, unique=True, verbose_name='email address')),
                 ('is_active', models.BooleanField(default=True)),
                 ('is_admin', models.BooleanField(default=False)),
                 ('beta_access', models.BooleanField(default=False)),

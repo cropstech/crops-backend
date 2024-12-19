@@ -1,8 +1,9 @@
-from ninja import Schema
+from ninja import Schema, ModelSchema
 from typing import List, Optional
 from datetime import datetime
 from uuid import UUID
 from pydantic import ConfigDict, BaseModel, Field
+from django_paddle_billing.models import Product, Subscription
 
 class WorkspaceCreateSchema(Schema):
     name: str
@@ -17,10 +18,15 @@ class WorkspaceDataSchema(Schema):
     created_at: datetime
     updated_at: datetime
     user_role: Optional[str] = None
+    subscription_details: Optional[dict] = None
 
     @staticmethod
     def resolve_id(obj):
         return str(obj.id)
+    
+    @staticmethod
+    def resolve_subscription_details(obj):
+        return obj.subscription_details
     
 class WorkspaceUpdateSchema(Schema):
     name: Optional[str] = None
@@ -110,3 +116,26 @@ class AssetSchema(Schema):
     model_config = ConfigDict(
         from_attributes=True
     )
+
+class SubscriptionSchema(ModelSchema):
+    class Meta:
+        model = Subscription
+        fields = "__all__"
+
+class ProductSchema(ModelSchema):
+    class Meta:
+        model = Product
+        fields = ["id", "name", "status", "created_at", "updated_at"]
+
+class ProductSubscriptionSchema(Schema):
+    products: list[ProductSchema] = []
+    subscriptions: list[SubscriptionSchema] = []
+
+class PlanOut(Schema):
+    id: str
+    name: str
+    description: Optional[str]
+    price_id: str
+    unit_price: float
+    billing_period: Optional[str]
+    features: List[str]

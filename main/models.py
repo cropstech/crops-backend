@@ -5,6 +5,10 @@ from django.contrib.contenttypes.models import ContentType
 import uuid
 from django.utils import timezone
 from django.conf import settings
+from django_paddle_billing.models import Subscription as PaddleSubscription
+import logging
+
+logger = logging.getLogger(__name__)
 
 def workspace_avatar_path(instance, filename):
     """Generate upload path for workspace avatars"""
@@ -33,9 +37,102 @@ class Workspace(models.Model):
         null=True,
         blank=True
     )
+    subscriptions = models.ManyToManyField(
+        PaddleSubscription,
+        related_name='workspaces',
+        blank=True
+    )
+
     def __str__(self):
         return self.name
+    
+    class Meta:
+        app_label = 'main'
 
+    @property
+    def subscription_details(self):
+        """Get detailed subscription information"""
+        now = timezone.now()
+        
+        # Debug logging
+        all_subs = self.subscriptions.all()
+        logger.info(f"Workspace {self.id} subscriptions count: {all_subs.count()}")
+        
+        subscription = all_subs.first()
+        logger.info(f"Subscription: {subscription}")
+        
+        if not subscription:
+            logger.warning(f"No subscription found for workspace {self.id}")
+            return {
+                'status': 'free',
+                'billing_details': None
+            }
+
+        logger.info(f"Subscription data: {subscription.data}")
+        ends_at = subscription.data.get('ends_at')
+        scheduled_change = subscription.data.get('scheduled_change')
+        
+        if subscription.status == 'canceled' and ends_at and ends_at < now.isoformat():
+            return {
+                'status': 'free',
+                'billing_details': None
+            }
+        
+        # Safely get billing cycle data
+        billing_cycle = subscription.data.get('billing_cycle', {})
+        logger.info(f"Billing cycle: {billing_cycle}")
+        
+        # Get first product safely
+        product = subscription.products.first()
+        plan_name = product.name if product else 'Unknown'
+        
+        return_data = {
+            'status': subscription.status,
+            'plan': plan_name,
+            'billing_details': {
+                'id': subscription.id,
+                'next_billed_at': subscription.data.get('next_billed_at'),
+                'billing_interval': billing_cycle.get('interval'),
+                'billing_frequency': billing_cycle.get('frequency'),
+                'canceled_at': subscription.data.get('canceled_at'),
+                'ends_at': subscription.data.get('ends_at'),
+                'scheduled_change': scheduled_change
+            }
+        }
+        
+        logger.info(f"Return data: {return_data}")
+        return return_data
+
+    @property
+    def subscription_status(self):
+        """Get the current subscription status"""
+        active_subscription = self.subscriptions.filter(
+            status__in=['active', 'trialing']
+        ).first()
+        
+        if not active_subscription:
+            return 'free'
+        return active_subscription.status
+
+    @property
+    def is_paid(self):
+        """Check if workspace has an active paid subscription"""
+        return self.subscription_status in ['active', 'trialing']
+
+    def can_use_feature(self, feature_name):
+        """Check if workspace can use a specific feature"""
+        workspace_sub = getattr(self, 'subscription', None)
+        if not workspace_sub or not workspace_sub.subscription:
+            return False  # or check against free tier features
+            
+        # Check feature availability based on subscription plan
+        plan = workspace_sub.subscription.price.product.name
+        # Implement your feature matrix here
+        feature_matrix = {
+            'pro': ['feature1', 'feature2'],
+            'enterprise': ['feature1', 'feature2', 'feature3']
+        }
+        return feature_name in feature_matrix.get(plan, [])
 
 class WorkspaceMember(models.Model):
     class Role(models.TextChoices):
@@ -215,3 +312,4 @@ class Collection(models.Model):
 
     def __str__(self):
         return self.name
+

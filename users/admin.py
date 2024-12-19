@@ -1,7 +1,7 @@
 from django.contrib import admin
 
 # Register your models here.
-from photomink.users.models import CustomUser
+from users.models import CustomUser
 from django.http import HttpResponse
 from django.contrib.auth import get_user_model
 import csv, datetime
