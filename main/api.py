@@ -30,6 +30,7 @@ from .schemas import (
     WorkspaceMemberSchema,
     ProductSubscriptionSchema,
     PlanOut,
+    TransactionSchema
 )
 from .utils import send_invitation_email, process_file_metadata, process_file_metadata_background, executor, accept_invitation
 from .decorators import check_workspace_permission
@@ -506,4 +507,47 @@ def update_subscription(
     except Exception as e:
         logger.error(f"Error updating subscription: {str(e)}")
         raise ValidationError("Failed to update subscription")
+
+@router.get("/workspaces/{workspace_id}/subscription/transactions", response=List[TransactionSchema])
+@decorate_view(check_workspace_permission(WorkspaceMember.Role.ADMIN))
+def get_subscription_transactions(request, workspace_id: UUID):
+    workspace = get_object_or_404(Workspace, id=workspace_id)
+    subscriptions = workspace.subscriptions.all()
+    if not subscriptions:
+        return []
+    
+    try:
+        # Loop through all subscriptions and get transactions 
+        transactions = []
+        for subscription in subscriptions:
+            items = subscription.transactions.all()
+            transactions.extend(items)
+
+        print(transactions)
+        return transactions
+    
+    except Exception as e:
+        logger.error(f"Error fetching transactions: {str(e)}")
+        raise HttpError(400, "Failed to fetch transactions")
+
+@router.get("/workspaces/{workspace_id}/subscription/{subscription_id}/update-payment-method")
+@decorate_view(check_workspace_permission(WorkspaceMember.Role.ADMIN))
+def get_subscription_update_payment_transaction(request, workspace_id: UUID):
+    workspace = get_object_or_404(Workspace, id=workspace_id)
+    subscription = workspace.subscriptions.first()
+    
+    if not subscription:
+        raise HttpError(404, "No subscription found")
+        
+    try:
+        paddle = PaddleApiClient()
+        transaction = paddle.get_transaction_to_update_payment_method(
+            subscription_id=subscription_id
+        )
+        
+        return transaction
+        
+    except Exception as e:
+        logger.error(f"Error getting update payment transaction: {str(e)}")
+        raise HttpError(400, "Failed to get update payment transaction")
 

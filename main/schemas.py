@@ -3,7 +3,7 @@ from typing import List, Optional
 from datetime import datetime
 from uuid import UUID
 from pydantic import ConfigDict, BaseModel, Field
-from django_paddle_billing.models import Product, Subscription
+from django_paddle_billing.models import Product, Subscription, Transaction
 
 class WorkspaceCreateSchema(Schema):
     name: str
@@ -139,3 +139,8 @@ class PlanOut(Schema):
     unit_price: float
     billing_period: Optional[str]
     features: List[str]
+
+class TransactionSchema(ModelSchema):
+    class Meta:
+        model = Transaction
+        fields = "__all__"
