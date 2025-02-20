@@ -19,7 +19,6 @@ import boto3
 from botocore.exceptions import ClientError
 import uuid
 from django.core.exceptions import PermissionDenied, ValidationError
-from paddle_billing_client.client import PaddleApiClient
 from apiclient import HeaderAuthentication
 from .models import Workspace, WorkspaceInvitation, ShareLink, WorkspaceMember, Asset
 from .schemas import (
@@ -530,7 +529,7 @@ def get_subscription_transactions(request, workspace_id: UUID):
         logger.error(f"Error fetching transactions: {str(e)}")
         raise HttpError(400, "Failed to fetch transactions")
 
-@router.get("/workspaces/{workspace_id}/subscription/{subscription_id}/update-payment-method")
+@router.get("/workspaces/{workspace_id}/subscription/update-payment-method")
 @decorate_view(check_workspace_permission(WorkspaceMember.Role.ADMIN))
 def get_subscription_update_payment_transaction(request, workspace_id: UUID):
     workspace = get_object_or_404(Workspace, id=workspace_id)
@@ -540,9 +539,9 @@ def get_subscription_update_payment_transaction(request, workspace_id: UUID):
         raise HttpError(404, "No subscription found")
         
     try:
-        paddle = PaddleApiClient()
-        transaction = paddle.get_transaction_to_update_payment_method(
-            subscription_id=subscription_id
+        logger.info(f"Getting update payment method for subscription {subscription.id}")
+        transaction = paddle_client.get_transaction_to_update_payment_method(
+            subscription_id=subscription.id
         )
         
         return transaction
