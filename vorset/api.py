@@ -5,8 +5,8 @@ from django.core.exceptions import ObjectDoesNotExist
 from ninja.security import django_auth
 
 api = NinjaAPI(
-    title="PhotoMink API",
-    description="API for PhotoMink services",
+    title="vorset API",
+    description="API for vorset services",
     version='1.0',
     csrf=True,
     auth=django_auth

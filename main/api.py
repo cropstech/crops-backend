@@ -360,16 +360,14 @@ def get_asset(request, workspace_id: UUID, asset_id: UUID):
     )
     return asset
 
-@router.get("/workspaces/{workspace_id}/assets")
+@router.get("/workspaces/{workspace_id}/assets", response=List[AssetSchema])
 @decorate_view(check_workspace_permission(WorkspaceMember.Role.COMMENTER))
 def list_assets(
-    request, 
-    workspace_id: UUID, 
-    workspace: Any, 
-    member: Any
+    request,
+    workspace_id: UUID,
 ):
-    assets = Asset.objects.filter(workspace=workspace)
-    return assets
+    assets = Asset.objects.filter(workspace_id=workspace_id)
+    return list(assets)
 
 @router.get("/products", response=ProductSubscriptionSchema)
 def products(request, workspace_id: str):

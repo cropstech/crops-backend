@@ -1,4 +1,4 @@
-# Photomink
+# Vorset
 
 A digital asset management platform with advanced collaboration features.
 
