@@ -321,6 +321,7 @@ def get_invite_info(request, token: str):
 def create_asset(
     request, 
     workspace_id: UUID,
+    board_id: UUID = None,
     file: UploadedFile = File(...),
 ):
     workspace = get_object_or_404(Workspace, id=workspace_id)
@@ -365,8 +366,24 @@ def get_asset(request, workspace_id: UUID, asset_id: UUID):
 def list_assets(
     request,
     workspace_id: UUID,
+    page: int = 1,
+    page_size: int = 20,
+    order_by: str = "-date_created",  # Changed from created_at to date_created
+    search: str = None,
 ):
-    assets = Asset.objects.filter(workspace_id=workspace_id)
+    # Calculate offset
+    offset = (page - 1) * page_size
+    
+    # Base query
+    query = Asset.objects.filter(workspace_id=workspace_id)
+    
+    # Add search filter if search term provided
+    if search:
+        query = query.filter(file__icontains=search)
+    
+    # Get paginated and filtered assets
+    assets = query.order_by(order_by)[offset:offset + page_size]
+    
     return list(assets)
 
 @router.get("/products", response=ProductSubscriptionSchema)

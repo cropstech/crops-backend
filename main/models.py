@@ -246,6 +246,13 @@ class ShareLink(models.Model):
             return False
         return True
 
+class Board(models.Model):
+    name = models.CharField(max_length=200)
+    description = models.TextField(blank=True)
+    workspace = models.ForeignKey(Workspace, on_delete=models.CASCADE)
+    created_at = models.DateTimeField(auto_now_add=True)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True)
+
 class Asset(models.Model):
     ASSET_TYPES = [
         ('IMAGE', 'Image'),
@@ -256,8 +263,9 @@ class Asset(models.Model):
     ]
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     workspace = models.ForeignKey(Workspace, on_delete=models.CASCADE, related_name='assets')
+    boards = models.ManyToManyField(Board, through='BoardAsset', related_name='assets')
     name = models.CharField(max_length=255)
-    file = models.FileField(upload_to='assets/')
+    file = models.FileField(upload_to=workspace_asset_path)
     file_type = models.CharField(max_length=20, choices=ASSET_TYPES)
     mime_type = models.CharField(max_length=127, null=True, blank=True)
     file_extension = models.CharField(max_length=20, null=True, blank=True)  # jpg, mp4, etc.
@@ -313,3 +321,9 @@ class Collection(models.Model):
     def __str__(self):
         return self.name
 
+class BoardAsset(models.Model):
+    board = models.ForeignKey(Board, on_delete=models.CASCADE)
+    asset = models.ForeignKey(Asset, on_delete=models.CASCADE)
+    added_at = models.DateTimeField(auto_now_add=True)
+    added_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True)
+    position = models.JSONField(null=True)  # for storing layout position if needed
