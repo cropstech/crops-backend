@@ -280,3 +280,61 @@ def accept_invitation(token, user):
     invitation.status = 'ACCEPTED'
     invitation.save()
     return invitation
+
+def quick_file_metadata(file_or_path) -> FileMetadata:
+    """
+    Quickly extract basic metadata from an uploaded file
+    Only gets essential info needed at upload time
+    More intensive processing is handled later by Lambda
+    """
+    # Handle both string paths and UploadedFile objects
+    if isinstance(file_or_path, str):
+        filename = os.path.basename(file_or_path)
+        file_size = os.path.getsize(file_or_path)
+        file = open(file_or_path, 'rb')
+    else:
+        filename = file_or_path.name
+        file_size = file_or_path.size
+        file = file_or_path
+
+    try:
+        # Basic file info
+        name, ext = os.path.splitext(filename)
+        file_extension = ext.lower().lstrip('.')
+        
+        # Quick MIME type check - only read first 2048 bytes
+        kind = filetype.guess(file.read(2048))
+        mime_type = kind.mime if kind else mimetypes.guess_type(filename)[0] or 'application/octet-stream'
+        file.seek(0)
+        
+        dimensions = None
+        file_type = 'OTHER'
+        
+        # Only do quick image dimensions check for images
+        if mime_type.startswith('image/'):
+            file_type = 'IMAGE'
+            try:
+                # PIL's open doesn't read the whole file immediately
+                with Image.open(file) as img:
+                    dimensions = img.size
+            except Exception:
+                pass
+        elif mime_type.startswith('video/'):
+            file_type = 'VIDEO'
+        elif mime_type.startswith('audio/'):
+            file_type = 'AUDIO'
+
+        return FileMetadata(
+            name=name,
+            file_type=file_type,
+            mime_type=mime_type,
+            file_extension=file_extension,
+            size=file_size,
+            dimensions=dimensions,
+            duration=None,  # Let Lambda handle this
+            date_created=datetime.now(),  # Simple current timestamp
+            metadata={}  # Let Lambda handle detailed metadata
+        )
+    finally:
+        if isinstance(file_or_path, str):
+            file.close()

@@ -20,7 +20,7 @@ from botocore.exceptions import ClientError
 import uuid
 from django.core.exceptions import PermissionDenied, ValidationError
 from apiclient import HeaderAuthentication
-from .models import Workspace, WorkspaceInvitation, ShareLink, WorkspaceMember, Asset
+from .models import Workspace, WorkspaceInvitation, ShareLink, WorkspaceMember, Asset, Board
 from .schemas import (
     WorkspaceInviteSchema, ShareLinkSchema, WorkspaceCreateSchema, 
     WorkspaceDataSchema, WorkspaceUpdateSchema, 
@@ -29,9 +29,12 @@ from .schemas import (
     WorkspaceMemberSchema,
     ProductSubscriptionSchema,
     PlanOut,
-    TransactionSchema
+    TransactionSchema,
+    BoardCreateSchema,
+    BoardUpdateSchema,
+    BoardOutSchema
 )
-from .utils import send_invitation_email, process_file_metadata, process_file_metadata_background, executor, accept_invitation
+from .utils import send_invitation_email, process_file_metadata, process_file_metadata_background, executor, accept_invitation, quick_file_metadata
 from .decorators import check_workspace_permission
 from django_paddle_billing.models import Product, Subscription, Price, paddle_client
 from paddle_billing_client.models.subscription import SubscriptionRequest
@@ -326,7 +329,10 @@ def create_asset(
 ):
     workspace = get_object_or_404(Workspace, id=workspace_id)
     
-    # Create asset with initial status
+    # Get quick metadata first
+    file_metadata = quick_file_metadata(file)
+    
+    # Create asset with initial metadata
     with transaction.atomic():
         asset = Asset.objects.create(
             workspace=workspace,
@@ -334,21 +340,19 @@ def create_asset(
             file=file,
             status=Asset.Status.PROCESSING,
             size=file.size,
+            file_type=file_metadata.file_type,
+            mime_type=file_metadata.mime_type,
+            file_extension=file_metadata.file_extension,
+            width=file_metadata.dimensions[0] if file_metadata.dimensions else None,
+            height=file_metadata.dimensions[1] if file_metadata.dimensions else None,
+            name=file_metadata.name
         )
         
-        # Save file to storage
-        file_path = default_storage.save(
-            f'workspaces/{workspace_id}/assets/{asset.id}/{file.name}', 
-            file
-        )
-        
-        # Submit background task
-        executor.submit(
-            process_file_metadata_background,
-            asset_id=asset.id,
-            file_path=file_path,
-            user=request.user
-        )
+        # Lambda will handle the detailed processing
+        # The existing Lambda function should update the asset with additional metadata
+    
+    logger.debug(f"Asset created: {asset.id} with file: {file.name}")
+    logger.debug(f"Initial metadata extracted: {file_metadata.file_type}, size: {file_metadata.size}")
     
     return asset
 
@@ -368,7 +372,7 @@ def list_assets(
     workspace_id: UUID,
     page: int = 1,
     page_size: int = 20,
-    order_by: str = "-date_created",  # Changed from created_at to date_created
+    order_by: str = "-date_uploaded",  # Changed from created_at to date_created
     search: str = None,
 ):
     # Calculate offset
@@ -565,3 +569,123 @@ def get_subscription_update_payment_transaction(request, workspace_id: UUID):
         logger.error(f"Error getting update payment transaction: {str(e)}")
         raise HttpError(400, "Failed to get update payment transaction")
 
+@router.post("/workspaces/{workspace_id}/boards", response=BoardOutSchema)
+@decorate_view(check_workspace_permission(WorkspaceMember.Role.EDITOR))
+def create_board(request, workspace_id: UUID, data: BoardCreateSchema):
+    """Create a new board in the workspace"""
+    workspace = get_object_or_404(Workspace, id=workspace_id)
+    
+    # If parent_id is provided, verify it exists and belongs to the same workspace
+    parent = None
+    if data.parent_id:
+        parent = get_object_or_404(
+            Board.objects.filter(workspace_id=workspace_id),
+            id=data.parent_id
+        )
+    
+    board = Board.objects.create(
+        workspace=workspace,
+        name=data.name,
+        description=data.description,
+        parent=parent,
+        created_by=request.user
+    )
+    
+    return board
+
+@router.get("/workspaces/{workspace_id}/boards", response=List[BoardOutSchema])
+@decorate_view(check_workspace_permission(WorkspaceMember.Role.COMMENTER))
+def list_boards(
+    request, 
+    workspace_id: UUID,
+    parent_id: Optional[UUID] = None,
+    recursive: bool = False
+):
+    """
+    List boards in the workspace
+    - If parent_id is None, returns root boards
+    - If parent_id is provided, returns child boards
+    - If recursive is True, returns all descendants including the parent board
+    """
+    workspace = get_object_or_404(Workspace, id=workspace_id)
+    
+    if parent_id:
+        parent = get_object_or_404(Board, workspace=workspace, id=parent_id)
+        if recursive:
+            # Start with the parent board
+            boards = [parent]
+            # Add all descendants
+            boards.extend(parent.get_descendants())
+            return boards
+        return list(Board.objects.filter(workspace=workspace, parent=parent_id))
+    else:
+        # Return root boards (no parent)
+        root_boards = list(Board.objects.filter(workspace=workspace, parent=None))
+        if recursive:
+            # Get all boards if recursive is True
+            all_boards = []
+            for root in root_boards:
+                all_boards.append(root)
+                all_boards.extend(root.get_descendants())
+            return all_boards
+        return root_boards
+
+@router.get("/workspaces/{workspace_id}/boards/{board_id}", response=BoardOutSchema)
+@decorate_view(check_workspace_permission(WorkspaceMember.Role.COMMENTER))
+def get_board(request, workspace_id: UUID, board_id: UUID):
+    """Get a specific board"""
+    board = get_object_or_404(
+        Board.objects.filter(workspace_id=workspace_id),
+        id=board_id
+    )
+    return board
+
+@router.get("/workspaces/{workspace_id}/boards/{board_id}/ancestors", response=List[BoardOutSchema])
+@decorate_view(check_workspace_permission(WorkspaceMember.Role.COMMENTER))
+def get_board_ancestors(request, workspace_id: UUID, board_id: UUID):
+    """Get all ancestor boards up to root"""
+    board = get_object_or_404(
+        Board.objects.filter(workspace_id=workspace_id),
+        id=board_id
+    )
+    return board.get_ancestors()
+
+@router.put("/workspaces/{workspace_id}/boards/{board_id}", response=BoardOutSchema)
+@decorate_view(check_workspace_permission(WorkspaceMember.Role.EDITOR))
+def update_board(request, workspace_id: UUID, board_id: UUID, data: BoardUpdateSchema):
+    """Update a board"""
+    board = get_object_or_404(
+        Board.objects.filter(workspace_id=workspace_id),
+        id=board_id
+    )
+    
+    if data.name is not None:
+        board.name = data.name
+    if data.description is not None:
+        board.description = data.description
+    if data.parent_id is not None:
+        # Prevent circular references
+        if data.parent_id == board.id:
+            raise HttpError(400, "Board cannot be its own parent")
+        if data.parent_id in [b.id for b in board.get_descendants()]:
+            raise HttpError(400, "Cannot set a descendant as parent")
+            
+        parent = get_object_or_404(
+            Board.objects.filter(workspace_id=workspace_id),
+            id=data.parent_id
+        )
+        board.parent = parent
+        
+    board.save()
+    return board
+
+@router.delete("/workspaces/{workspace_id}/boards/{board_id}")
+@decorate_view(check_workspace_permission(WorkspaceMember.Role.EDITOR))
+def delete_board(request, workspace_id: UUID, board_id: UUID):
+    """Delete a board"""
+    board = get_object_or_404(
+        Board.objects.filter(workspace_id=workspace_id),
+        id=board_id
+    )
+    board.delete()
+    return {"success": True}

@@ -15,7 +15,7 @@ Including another URLconf
 """
 from django.contrib import admin
 from django.urls import path
-from .api import api
+from .api import api, webhook_api
 
 from django_paddle_billing.urls import urlpatterns as paddle_billing_urls
 
@@ -23,5 +23,6 @@ from django_paddle_billing.urls import urlpatterns as paddle_billing_urls
 urlpatterns = [
     path('admin/', admin.site.urls),
     path("api/v1/", api.urls),
+    path("webhooks/", webhook_api.urls),
 ]
 urlpatterns += paddle_billing_urls

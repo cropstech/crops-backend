@@ -24,17 +24,19 @@ environ.Env.read_env(os.path.join(BASE_DIR, ".env"))  # reading .env file
 
 env = environ.Env(
     # set casting, default value
-    DJANGO_DEBUG=(bool, False),
+    DJANGO_DEBUG=(bool, True),
     ALLOWED_HOSTS=(list, ['127.0.0.1', 'localhost']),
     FRONTEND_URL=(str, 'https://localhost:9100'),
     STATIC_URL=(str, 'https://assetia.s3.us-east-2.amazonaws.com/static/'),
     AWS_S3_CUSTOM_DOMAIN=(str, 'assetia.s3.us-east-2.amazonaws.com'),
     AWS_STORAGE_BUCKET_NAME=(str, 'assetia'),
     AWS_S3_LOCATION=(str, 'us-east-2'),
-    INKSCAPE_PATH=(str, 'inkscape'),
     CELERY_BROKER_URL=(str, 'redis://:tzJ*cEscpUonRqAoVAQ9TNB%8KkGSD58%3xeNN^4@10.0.0.6:6379/0'),
     CELERY_RESULT_BACKEND=(str, 'redis://:tzJ*cEscpUonRqAoVAQ9TNB%8KkGSD58%3xeNN^4@10.0.0.6:6379/1'),
+    LAMBDA_AUTH_TOKEN=(str, 'supersecret'),
 )
+
+LAMBDA_AUTH_TOKEN = env('LAMBDA_AUTH_TOKEN')
 
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/3.2/howto/deployment/checklist/
@@ -241,7 +243,7 @@ STORAGES = {
 
 # URLs for static and media files
 STATIC_URL = f'https://{AWS_S3_CUSTOM_DOMAIN}/static/'
-MEDIA_URL = f'https://{AWS_S3_CUSTOM_DOMAIN}/media/'
+MEDIA_URL = f'https://{AWS_S3_CUSTOM_DOMAIN}/processed/'
 
 # Still needed for collectstatic
 STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')

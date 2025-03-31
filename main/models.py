@@ -13,11 +13,14 @@ logger = logging.getLogger(__name__)
 def workspace_avatar_path(instance, filename):
     """Generate upload path for workspace avatars"""
     ext = filename.split('.')[-1].lower()
-    return f'media/workspaces/{instance.id}/avatars/{uuid.uuid4()}.{ext}'
+    return f'workspaces/{instance.id}/avatars/{uuid.uuid4()}.{ext}'
 
 def workspace_asset_path(instance, filename):
     """Generate upload path for workspace assets"""
-    return f'media/workspaces/{instance.workspace.id}/assets/{instance.id}/{filename}'
+    logger.debug(f"Generating path for file: {filename} for asset: {instance.id}")
+    logger.debug(f"Asset status: {instance.status}")
+    logger.debug(f"Asset creation timestamp: {instance.date_uploaded}")
+    return f'workspaces/{instance.workspace.id}/assets/{instance.id}/{filename}'
 
 class Workspace(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -247,11 +250,73 @@ class ShareLink(models.Model):
         return True
 
 class Board(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     name = models.CharField(max_length=200)
-    description = models.TextField(blank=True)
-    workspace = models.ForeignKey(Workspace, on_delete=models.CASCADE)
+    description = models.TextField(blank=True, default='Click to edit description')
+    workspace = models.ForeignKey(Workspace, on_delete=models.CASCADE, related_name='boards')
+    parent = models.ForeignKey('self', on_delete=models.CASCADE, null=True, blank=True, related_name='children')
     created_at = models.DateTimeField(auto_now_add=True)
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"{self.name} - {self.workspace.name}"
+
+    @property
+    def asset_count(self):
+        """Get the number of assets in this board"""
+        return self.assets.count()
+
+    @property
+    def is_root(self):
+        """Check if this is a root board (no parent)"""
+        return self.parent is None
+
+    @property
+    def level(self):
+        """Get the nesting level of this board"""
+        level = 0
+        current = self
+        while current.parent:
+            level += 1
+            current = current.parent
+        return level
+
+    def get_ancestors(self):
+        """Get all parent boards up to root"""
+        ancestors = []
+        current = self.parent
+        while current:
+            ancestors.append(current)
+            current = current.parent
+        return ancestors
+
+    def get_descendants(self):
+        """Get all child boards recursively using a more efficient query"""
+        descendants = []
+        to_process = list(self.children.all())
+        
+        while to_process:
+            current = to_process.pop(0)
+            descendants.append(current)
+            to_process.extend(current.children.all())
+            
+        return descendants
+
+    def get_all_descendants_query(self):
+        """
+        Alternative method that gets all descendants in a single query
+        More efficient for large hierarchies
+        """
+        return Board.objects.filter(
+            workspace=self.workspace,
+            parent__in=Board.objects.filter(
+                workspace=self.workspace
+            ).get_descendants(include_self=True)
+        ).select_related('parent', 'created_by')
 
 class Asset(models.Model):
     ASSET_TYPES = [
@@ -265,7 +330,10 @@ class Asset(models.Model):
     workspace = models.ForeignKey(Workspace, on_delete=models.CASCADE, related_name='assets')
     boards = models.ManyToManyField(Board, through='BoardAsset', related_name='assets')
     name = models.CharField(max_length=255)
-    file = models.FileField(upload_to=workspace_asset_path)
+    file = models.FileField(
+        upload_to=workspace_asset_path,
+        max_length=500
+    )
     file_type = models.CharField(max_length=20, choices=ASSET_TYPES)
     mime_type = models.CharField(max_length=127, null=True, blank=True)
     file_extension = models.CharField(max_length=20, null=True, blank=True)  # jpg, mp4, etc.
@@ -279,7 +347,7 @@ class Asset(models.Model):
     metadata = models.JSONField(default=dict, blank=True)  # Flexible metadata storage
     
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True)
-    date_created = models.DateTimeField(null=True)
+    date_created = models.DateTimeField(null=True, blank=True) # When the file was originally created, not when it was uploaded
     date_modified = models.DateTimeField(auto_now=True)
     date_uploaded = models.DateTimeField(auto_now_add=True)
 
@@ -297,6 +365,11 @@ class Asset(models.Model):
 
     def __str__(self):
         return self.name
+
+    def save(self, *args, **kwargs):
+        logger.debug(f"Saving asset: {self.id}, filename: {self.file.name if self.file else 'None'}")
+        super().save(*args, **kwargs)
+        logger.debug(f"Asset saved: {self.id}")
 
 class Tag(models.Model):
     name = models.CharField(max_length=100)
@@ -327,3 +400,45 @@ class BoardAsset(models.Model):
     added_at = models.DateTimeField(auto_now_add=True)
     added_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True)
     position = models.JSONField(null=True)  # for storing layout position if needed
+
+class AssetAnalysis(models.Model):
+    """Stores AI-generated analysis results for assets"""
+    asset = models.OneToOneField(Asset, on_delete=models.CASCADE, related_name='ai_analysis')
+    
+    # Store the raw analysis JSON data
+    raw_analysis = models.JSONField(default=dict)
+    
+    # Extract specific fields for efficient querying
+    labels = models.JSONField(default=list, help_text="AI-detected objects/scenes")
+    moderation_labels = models.JSONField(default=list, help_text="Content moderation results")
+    
+    # Text field for full-text search
+    searchable_text = models.TextField(blank=True, help_text="Flattened text of all labels for searching")
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    def __str__(self):
+        return f"Analysis for {self.asset.name}"
+    
+    def save(self, *args, **kwargs):
+        # Extract all label names to a searchable text field
+        label_texts = []
+        
+        # Process regular labels
+        for label in self.labels:
+            if isinstance(label, dict) and 'name' in label:
+                label_texts.append(label['name'].lower())
+        
+        # Process moderation labels
+        for label in self.moderation_labels:
+            if isinstance(label, dict) and 'name' in label:
+                label_texts.append(label['name'].lower())
+        
+        # Join all texts with spaces for better search
+        self.searchable_text = ' '.join(label_texts)
+        
+        super().save(*args, **kwargs)
+    
+    class Meta:
+        verbose_name_plural = "Asset analyses"

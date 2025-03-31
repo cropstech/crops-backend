@@ -4,6 +4,7 @@ from datetime import datetime
 from uuid import UUID
 from pydantic import ConfigDict, BaseModel, Field
 from django_paddle_billing.models import Product, Subscription, Transaction
+from os.path import dirname
 
 class WorkspaceCreateSchema(Schema):
     name: str
@@ -103,6 +104,8 @@ class InviteAcceptSchema(Schema):
 class AssetSchema(Schema):
     id: UUID
     file: str
+    url: str
+    directory: str  # New field for the path without filename
     size: int
     status: str
     date_created: Optional[datetime]
@@ -116,6 +119,26 @@ class AssetSchema(Schema):
     model_config = ConfigDict(
         from_attributes=True
     )
+
+    @staticmethod
+    def resolve_url(obj):
+        if obj.file:
+            return obj.file.url
+        return None
+
+    @staticmethod
+    def resolve_file(obj):
+        if obj.file:
+            return obj.file.name
+        return None
+
+    @staticmethod
+    def resolve_directory(obj):
+        """Get the directory path without the filename"""
+        if obj.file:
+            # Get the full path and remove the filename
+            return dirname(obj.file.name)
+        return None
 
 class SubscriptionSchema(ModelSchema):
     class Meta:
@@ -144,3 +167,33 @@ class TransactionSchema(ModelSchema):
     class Meta:
         model = Transaction
         fields = "__all__"
+
+class BoardCreateSchema(Schema):
+    name: str
+    description: Optional[str] = None
+    parent_id: Optional[UUID] = None
+
+class BoardUpdateSchema(Schema):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    parent_id: Optional[UUID] = None
+
+class BoardOutSchema(Schema):
+    id: UUID
+    name: str
+    description: Optional[str]
+    workspace_id: UUID
+    parent_id: Optional[UUID]
+    created_at: datetime
+    created_by_id: Optional[int]
+    is_root: bool
+    level: int
+    child_count: int
+    
+    model_config = ConfigDict(
+        from_attributes=True
+    )
+
+    @staticmethod
+    def resolve_child_count(obj):
+        return obj.children.count()

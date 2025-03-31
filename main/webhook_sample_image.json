@@ -1,0 +1,77 @@
+{
+  'asset_id': 'fd1bf541-5700-4440-af7a-a921717b9576',
+  'original': {
+    'bucket': 'test-bucket',
+    'key': '3.jpeg'
+  },
+  'processed': {
+    'large': {
+      'bucket': 'test-bucket',
+      'key': 'processed//large.jpg'
+    },
+    'medium': {
+      'bucket': 'test-bucket',
+      'key': 'processed//medium.jpg'
+    },
+    'thumbnail': {
+      'bucket': 'test-bucket',
+      'key': 'processed//thumbnail.jpg'
+    },
+    'original': {
+      'bucket': 'test-bucket',
+      'key': 'processed//original..jpeg'
+    }
+  },
+  'metadata': {
+    'format': {
+      'name': 'jpeg_pipe',
+      'size': 6908399,
+      'probe_score': 26,
+      'tags': {},
+      'creation_time': ''
+    },
+    'image': {
+      'codec': {
+        'name': 'mjpeg',
+        'long_name': 'Motion JPEG',
+        'profile': 'Progressive'
+      },
+      'dimensions': {
+        'width': 4275,
+        'height': 6413,
+        'sample_aspect_ratio': '1:1',
+        'display_aspect_ratio': '4275:6413'
+      },
+      'color': {
+        'space': 'bt470bg',
+        'transfer': '',
+        'primaries': '',
+        'range': 'pc'
+      },
+      'bit_depth': '8',
+      'tags': {}
+    }
+  },
+  'analysis': {
+    'labels': [{
+      'name': 'Person',
+      'confidence': 99.1
+    }, {
+      'name': 'Tent',
+      'confidence': 97.8
+    }, {
+      'name': 'Camping',
+      'confidence': 95.5
+    }, {
+      'name': 'Nature',
+      'confidence': 94.2
+    }],
+    'moderation_labels': [{
+      'name': 'Safe',
+      'confidence': 98.7,
+      'parent': ''
+    }]
+  },
+  'status': 'completed',
+  'timestamp': '2025-03-31T14:42:07.891218'
+}

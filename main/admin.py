@@ -1,5 +1,5 @@
 from django.contrib import admin
-from main.models import Workspace, WorkspaceMember, Asset
+from main.models import Workspace, WorkspaceMember, Asset, AssetAnalysis
 
 # Register your models here.
 
@@ -25,7 +25,13 @@ class AssetAdmin(admin.ModelAdmin):
     search_fields = ['name', 'id', 'workspace__name']
     ordering = ['-date_uploaded']
     readonly_fields = ('id', 'date_modified', 'date_uploaded')
+    
+class AssetAnalysisAdmin(admin.ModelAdmin):
+    list_display = ('asset', 'created_at', 'updated_at')
+    search_fields = ['asset__name']
+    ordering = ['-created_at']
 
 admin.site.register(Workspace, WorkspaceAdmin)
 admin.site.register(WorkspaceMember, WorkspaceMemberAdmin)
 admin.site.register(Asset, AssetAdmin)
+admin.site.register(AssetAnalysis, AssetAnalysisAdmin)
