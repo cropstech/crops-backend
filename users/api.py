@@ -26,6 +26,13 @@ logger = logging.getLogger(__name__)
 
 router = Router(tags=["users"])
 
+class UserSchema(Schema):
+    id: int
+    username: str
+    email: str
+    first_name: str
+    last_name: str
+
 class SignInSchema(BaseModel):
     email: str
     password: str

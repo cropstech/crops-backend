@@ -5,6 +5,7 @@ from uuid import UUID
 from pydantic import ConfigDict, BaseModel, Field
 from django_paddle_billing.models import Product, Subscription, Transaction
 from os.path import dirname
+from users.api import UserSchema
 
 class WorkspaceCreateSchema(Schema):
     name: str
@@ -115,7 +116,12 @@ class AssetSchema(Schema):
     file_type: Optional[str] = None
     mime_type: Optional[str] = None
     metadata: Optional[dict] = None
-
+    width: Optional[int] = None
+    height: Optional[int] = None
+    duration: Optional[float] = None
+    processing_error: Optional[str] = None
+    workspace_id: UUID
+    created_by: Optional[UserSchema] = None
     model_config = ConfigDict(
         from_attributes=True
     )
