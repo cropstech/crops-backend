@@ -114,6 +114,7 @@ class AssetSchema(Schema):
     date_uploaded: datetime
     name: Optional[str] = None
     file_type: Optional[str] = None
+    file_extension: Optional[str] = None
     mime_type: Optional[str] = None
     metadata: Optional[dict] = None
     width: Optional[int] = None
