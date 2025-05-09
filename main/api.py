@@ -59,6 +59,14 @@ def create_workspace(request, data: WorkspaceCreateSchema):
         role=WorkspaceMember.Role.ADMIN
     )
     
+    # Create default board
+    Board.objects.create(
+        workspace=workspace,
+        name="General",
+        description="Default board for general content",
+        created_by=request.user
+    )
+    
     return workspace
 
 @router.get("/workspaces", response=List[WorkspaceDataSchema])
