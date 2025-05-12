@@ -204,3 +204,24 @@ class BoardOutSchema(Schema):
     @staticmethod
     def resolve_child_count(obj):
         return obj.children.count()
+
+class DownloadInitiateSchema(Schema):
+    asset_id: UUID
+    use_multipart: bool = False
+    part_size: Optional[int] = None  # Size in bytes for each part in multipart download
+
+class DownloadPartSchema(Schema):
+    part_number: int
+    start_byte: int
+    end_byte: int
+    url: str
+    expires_at: datetime
+
+class DownloadResponseSchema(Schema):
+    download_id: str
+    asset_id: UUID
+    total_size: int
+    total_parts: Optional[int] = None
+    parts: Optional[List[DownloadPartSchema]] = None
+    direct_url: Optional[str] = None  # For single file downloads
+    expires_at: datetime

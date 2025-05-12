@@ -32,12 +32,15 @@ from .schemas import (
     TransactionSchema,
     BoardCreateSchema,
     BoardUpdateSchema,
-    BoardOutSchema
+    BoardOutSchema,
+    DownloadInitiateSchema,
+    DownloadResponseSchema
 )
 from .utils import send_invitation_email, process_file_metadata, process_file_metadata_background, executor, accept_invitation, quick_file_metadata
 from .decorators import check_workspace_permission
 from django_paddle_billing.models import Product, Subscription, Price, paddle_client
 from paddle_billing_client.models.subscription import SubscriptionRequest
+from .download import DownloadManager
 
 router = Router(tags=["main"], auth=django_auth)
 
@@ -697,3 +700,26 @@ def delete_board(request, workspace_id: UUID, board_id: UUID):
     )
     board.delete()
     return {"success": True}
+
+@router.post("/workspaces/{workspace_id}/assets/{asset_id}/download", response=DownloadResponseSchema)
+@decorate_view(check_workspace_permission(WorkspaceMember.Role.COMMENTER))
+def initiate_download(request, workspace_id: UUID, asset_id: UUID, data: DownloadInitiateSchema):
+    """
+    Initiate a file download, supporting both single file and multipart downloads.
+    For large files (>5MB), multipart download is recommended for better reliability and performance.
+    """
+    asset = get_object_or_404(
+        Asset.objects.filter(workspace_id=workspace_id),
+        id=asset_id
+    )
+    
+    try:
+        download_info = DownloadManager.initiate_download(
+            asset=asset,
+            use_multipart=data.use_multipart,
+            part_size=data.part_size
+        )
+        return download_info
+    except Exception as e:
+        logger.error(f"Error initiating download for asset {asset_id}: {str(e)}")
+        raise HttpError(500, "Failed to initiate download")
