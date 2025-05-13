@@ -337,7 +337,8 @@ class Asset(models.Model):
     file_type = models.CharField(max_length=20, choices=ASSET_TYPES)
     mime_type = models.CharField(max_length=127, null=True, blank=True)
     file_extension = models.CharField(max_length=20, null=True, blank=True)  # jpg, mp4, etc.
-
+    favorite = models.BooleanField(default=False)
+    
     # Image/Video specific
     width = models.IntegerField(null=True, blank=True)
     height = models.IntegerField(null=True, blank=True)
