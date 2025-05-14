@@ -34,13 +34,21 @@ from .schemas import (
     BoardUpdateSchema,
     BoardOutSchema,
     DownloadInitiateSchema,
-    DownloadResponseSchema
+    DownloadResponseSchema,
+    AssetBulkTagsSchema,
+    AssetBulkFavoriteSchema,
+    AssetBulkBoardSchema,
+    AssetBulkMoveSchema,
+    AssetBulkDeleteSchema
 )
 from .utils import send_invitation_email, process_file_metadata, process_file_metadata_background, executor, accept_invitation, quick_file_metadata
 from .decorators import check_workspace_permission
 from django_paddle_billing.models import Product, Subscription, Price, paddle_client
 from paddle_billing_client.models.subscription import SubscriptionRequest
 from .download import DownloadManager
+import os
+import zipfile
+import tempfile
 
 router = Router(tags=["main"], auth=django_auth)
 
@@ -382,7 +390,7 @@ def list_assets(
     request,
     workspace_id: UUID,
     page: int = 1,
-    page_size: int = 20,
+    page_size: int = 60,
     order_by: str = "-date_uploaded",  # Changed from created_at to date_created
     search: str = None,
 ):
@@ -723,3 +731,203 @@ def initiate_download(request, workspace_id: UUID, asset_id: UUID, data: Downloa
     except Exception as e:
         logger.error(f"Error initiating download for asset {asset_id}: {str(e)}")
         raise HttpError(500, "Failed to initiate download")
+
+@router.post("/workspaces/{workspace_id}/assets/bulk/tags")
+@decorate_view(check_workspace_permission(WorkspaceMember.Role.EDITOR))
+def bulk_update_tags(request, workspace_id: UUID, data: AssetBulkTagsSchema):
+    """Update tags for multiple assets"""
+    workspace = get_object_or_404(Workspace, id=workspace_id)
+    
+    # Get assets that belong to this workspace
+    assets = Asset.objects.filter(
+        workspace=workspace,
+        id__in=data.asset_ids
+    )
+    
+    # Update tags for each asset
+    for asset in assets:
+        asset.metadata = asset.metadata or {}
+        asset.metadata["tags"] = data.tags
+        asset.save()
+    
+    return {"success": True, "updated_count": assets.count()}
+
+@router.post("/workspaces/{workspace_id}/assets/bulk/favorite")
+@decorate_view(check_workspace_permission(WorkspaceMember.Role.COMMENTER))
+def bulk_toggle_favorite(request, workspace_id: UUID, data: AssetBulkFavoriteSchema):
+    """Toggle favorite status for multiple assets"""
+    workspace = get_object_or_404(Workspace, id=workspace_id)
+    
+    # Get assets that belong to this workspace
+    assets = Asset.objects.filter(
+        workspace=workspace,
+        id__in=data.asset_ids
+    )
+    
+    # Update favorite status for each asset
+    for asset in assets:
+        asset.favorite = data.favorite
+        asset.save()
+    
+    return {"success": True, "updated_count": assets.count()}
+
+@router.post("/workspaces/{workspace_id}/boards/{board_id}/assets")
+@decorate_view(check_workspace_permission(WorkspaceMember.Role.EDITOR))
+def bulk_add_to_board(request, workspace_id: UUID, board_id: UUID, data: AssetBulkBoardSchema):
+    """Add multiple assets to a board"""
+    workspace = get_object_or_404(Workspace, id=workspace_id)
+    board = get_object_or_404(Board, workspace=workspace, id=board_id)
+    
+    # Get assets that belong to this workspace
+    assets = Asset.objects.filter(
+        workspace=workspace,
+        id__in=data.asset_ids
+    )
+    
+    # Add assets to board
+    count = 0
+    for asset in assets:
+        # Check if the relationship already exists to avoid duplicates
+        if not board.assets.filter(id=asset.id).exists():
+            board.assets.add(asset)
+            count += 1
+    
+    return {"success": True, "added_count": count}
+
+@router.post("/workspaces/{workspace_id}/assets/bulk/move")
+@decorate_view(check_workspace_permission(WorkspaceMember.Role.EDITOR))
+def bulk_move_assets(request, workspace_id: UUID, data: AssetBulkMoveSchema):
+    """Move multiple assets to a destination (workspace root or board)"""
+    workspace = get_object_or_404(Workspace, id=workspace_id)
+    
+    # Get assets that belong to this workspace
+    assets = Asset.objects.filter(
+        workspace=workspace,
+        id__in=data.asset_ids
+    )
+    
+    if data.destination_type == 'board':
+        # Move to a specific board
+        board = get_object_or_404(Board, workspace=workspace, id=data.destination_id)
+        
+        # First remove assets from all boards (if moving between boards)
+        for asset in assets:
+            asset.boards.clear()
+            # Then add to the destination board
+            asset.boards.add(board)
+            
+    elif data.destination_type == 'workspace':
+        # Move to workspace root (remove from all boards)
+        for asset in assets:
+            asset.boards.clear()
+    
+    return {"success": True, "moved_count": assets.count()}
+
+@router.delete("/workspaces/{workspace_id}/boards/{board_id}/assets")
+@decorate_view(check_workspace_permission(WorkspaceMember.Role.EDITOR))
+def bulk_remove_from_board(request, workspace_id: UUID, board_id: UUID, data: AssetBulkBoardSchema):
+    """Remove multiple assets from a board"""
+    workspace = get_object_or_404(Workspace, id=workspace_id)
+    board = get_object_or_404(Board, workspace=workspace, id=board_id)
+    
+    # Get assets that belong to this workspace
+    assets = Asset.objects.filter(
+        workspace=workspace,
+        id__in=data.asset_ids
+    )
+    
+    # Remove assets from board
+    count = 0
+    for asset in assets:
+        if board.assets.filter(id=asset.id).exists():
+            board.assets.remove(asset)
+            count += 1
+    
+    return {"success": True, "removed_count": count}
+
+@router.delete("/workspaces/{workspace_id}/assets/bulk")
+@decorate_view(check_workspace_permission(WorkspaceMember.Role.ADMIN))
+def bulk_delete_assets(request, workspace_id: UUID, data: AssetBulkDeleteSchema):
+    """Delete multiple assets"""
+    workspace = get_object_or_404(Workspace, id=workspace_id)
+    
+    # Get assets that belong to this workspace
+    assets = Asset.objects.filter(
+        workspace=workspace,
+        id__in=data.asset_ids
+    )
+    
+    # Delete assets
+    count = assets.count()
+    assets.delete()
+    
+    return {"success": True, "deleted_count": count}
+
+@router.post("/workspaces/{workspace_id}/assets/bulk/download")
+@decorate_view(check_workspace_permission(WorkspaceMember.Role.COMMENTER))
+def bulk_download_assets(request, workspace_id: UUID, data: AssetBulkBoardSchema):
+    """Create a zip archive of multiple assets and provide a download link"""
+    workspace = get_object_or_404(Workspace, id=workspace_id)
+    
+    # Get assets that belong to this workspace
+    assets = Asset.objects.filter(
+        workspace=workspace,
+        id__in=data.asset_ids
+    )
+    
+    if not assets:
+        raise HttpError(404, "No assets found for the provided IDs")
+    
+    try:
+        # Create temporary zip file
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.zip') as temp_file:
+            temp_path = temp_file.name
+        
+        # Create zip archive
+        with zipfile.ZipFile(temp_path, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+            for asset in assets:
+                # Get the file path from the storage backend
+                file_name = os.path.basename(asset.file.name)
+                
+                try:
+                    # Add the file to the zip with its original name
+                    zip_file.write(asset.file.path, file_name)
+                except Exception as e:
+                    logger.error(f"Error adding asset {asset.id} to zip: {str(e)}")
+                    continue
+        
+        # Upload the zip to S3 with a temporary key
+        zip_key = f"temp/{workspace.id}/bulk-download-{uuid.uuid4()}.zip"
+        with open(temp_path, 'rb') as f:
+            s3_client.put_object(
+                Bucket=settings.AWS_STORAGE_BUCKET_NAME,
+                Key=zip_key,
+                Body=f.read()
+            )
+        
+        # Generate a presigned URL for downloading the zip
+        url = s3_client.generate_presigned_url(
+            'get_object',
+            Params={
+                'Bucket': settings.AWS_STORAGE_BUCKET_NAME,
+                'Key': zip_key,
+                'ResponseContentDisposition': 'attachment; filename="assets.zip"',
+                'ResponseContentType': 'application/zip'
+            },
+            ExpiresIn=3600  # URL valid for 1 hour
+        )
+        
+        # Clean up temporary file
+        os.unlink(temp_path)
+        
+        return {
+            "download_url": url,
+            "expires_at": datetime.now() + timedelta(hours=1),
+            "asset_count": assets.count()
+        }
+    except Exception as e:
+        logger.error(f"Error creating bulk download: {str(e)}")
+        # Clean up temporary file if it exists
+        if os.path.exists(temp_path):
+            os.unlink(temp_path)
+        raise HttpError(500, "Failed to create bulk download")

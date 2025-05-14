@@ -123,6 +123,7 @@ class AssetSchema(Schema):
     processing_error: Optional[str] = None
     workspace_id: UUID
     created_by: Optional[UserSchema] = None
+    favorite: bool
     model_config = ConfigDict(
         from_attributes=True
     )
@@ -225,3 +226,22 @@ class DownloadResponseSchema(Schema):
     parts: Optional[List[DownloadPartSchema]] = None
     direct_url: Optional[str] = None  # For single file downloads
     expires_at: datetime
+
+class AssetBulkTagsSchema(Schema):
+    asset_ids: List[UUID]
+    tags: List[str]
+
+class AssetBulkFavoriteSchema(Schema):
+    asset_ids: List[UUID]
+    favorite: bool
+
+class AssetBulkBoardSchema(Schema):
+    asset_ids: List[UUID]
+
+class AssetBulkMoveSchema(Schema):
+    asset_ids: List[UUID]
+    destination_type: str  # 'workspace' or 'board'
+    destination_id: UUID
+
+class AssetBulkDeleteSchema(Schema):
+    asset_ids: List[UUID]
