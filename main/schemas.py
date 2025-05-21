@@ -101,52 +101,6 @@ class WorkspaceInviteOut(Schema):
     
 class InviteAcceptSchema(Schema):
     token: str
-    
-class AssetSchema(Schema):
-    id: UUID
-    file: str
-    url: str
-    directory: str  # New field for the path without filename
-    size: int
-    status: str
-    date_created: Optional[datetime]
-    date_modified: datetime
-    date_uploaded: datetime
-    name: Optional[str] = None
-    file_type: Optional[str] = None
-    file_extension: Optional[str] = None
-    mime_type: Optional[str] = None
-    metadata: Optional[dict] = None
-    width: Optional[int] = None
-    height: Optional[int] = None
-    duration: Optional[float] = None
-    processing_error: Optional[str] = None
-    workspace_id: UUID
-    created_by: Optional[UserSchema] = None
-    favorite: bool
-    model_config = ConfigDict(
-        from_attributes=True
-    )
-
-    @staticmethod
-    def resolve_url(obj):
-        if obj.file:
-            return obj.file.url
-        return None
-
-    @staticmethod
-    def resolve_file(obj):
-        if obj.file:
-            return obj.file.name
-        return None
-
-    @staticmethod
-    def resolve_directory(obj):
-        """Get the directory path without the filename"""
-        if obj.file:
-            # Get the full path and remove the filename
-            return dirname(obj.file.name)
-        return None
 
 class SubscriptionSchema(ModelSchema):
     class Meta:
@@ -245,3 +199,60 @@ class AssetBulkMoveSchema(Schema):
 
 class AssetBulkDeleteSchema(Schema):
     asset_ids: List[UUID]
+
+class AssetBulkDownloadSchema(Schema):
+    asset_ids: List[UUID]
+
+class BulkDownloadResponseSchema(Schema):
+    download_url: str
+    expires_at: datetime
+    asset_count: int
+    zip_size: int
+
+    
+class AssetSchema(Schema):
+    id: UUID
+    file: str
+    url: str
+    directory: str  # New field for the path without filename
+    size: int
+    status: str
+    date_created: Optional[datetime]
+    date_modified: datetime
+    date_uploaded: datetime
+    name: Optional[str] = None
+    file_type: Optional[str] = None
+    file_extension: Optional[str] = None
+    mime_type: Optional[str] = None
+    metadata: Optional[dict] = None
+    width: Optional[int] = None
+    height: Optional[int] = None
+    duration: Optional[float] = None
+    processing_error: Optional[str] = None
+    workspace_id: UUID
+    created_by: Optional[UserSchema] = None
+    favorite: bool
+    boards: Optional[List[BoardOutSchema]] = None
+    model_config = ConfigDict(
+        from_attributes=True
+    )
+
+    @staticmethod
+    def resolve_url(obj):
+        if obj.file:
+            return obj.file.url
+        return None
+
+    @staticmethod
+    def resolve_file(obj):
+        if obj.file:
+            return obj.file.name
+        return None
+
+    @staticmethod
+    def resolve_directory(obj):
+        """Get the directory path without the filename"""
+        if obj.file:
+            # Get the full path and remove the filename
+            return dirname(obj.file.name)
+        return None

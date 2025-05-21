@@ -252,7 +252,7 @@ class ShareLink(models.Model):
 class Board(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     name = models.CharField(max_length=200)
-    description = models.TextField(blank=True, default='Click to edit description')
+    description = models.TextField(blank=True, null=True)
     workspace = models.ForeignKey(Workspace, on_delete=models.CASCADE, related_name='boards')
     parent = models.ForeignKey('self', on_delete=models.CASCADE, null=True, blank=True, related_name='children')
     created_at = models.DateTimeField(auto_now_add=True)
@@ -338,7 +338,7 @@ class Asset(models.Model):
     mime_type = models.CharField(max_length=127, null=True, blank=True)
     file_extension = models.CharField(max_length=20, null=True, blank=True)  # jpg, mp4, etc.
     favorite = models.BooleanField(default=False)
-    
+
     # Image/Video specific
     width = models.IntegerField(null=True, blank=True)
     height = models.IntegerField(null=True, blank=True)

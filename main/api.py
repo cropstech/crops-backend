@@ -20,7 +20,7 @@ from botocore.exceptions import ClientError
 import uuid
 from django.core.exceptions import PermissionDenied, ValidationError
 from apiclient import HeaderAuthentication
-from .models import Workspace, WorkspaceInvitation, ShareLink, WorkspaceMember, Asset, Board
+from .models import Workspace, WorkspaceInvitation, ShareLink, WorkspaceMember, Asset, Board, BoardAsset
 from .schemas import (
     WorkspaceInviteSchema, ShareLinkSchema, WorkspaceCreateSchema, 
     WorkspaceDataSchema, WorkspaceUpdateSchema, 
@@ -39,7 +39,9 @@ from .schemas import (
     AssetBulkFavoriteSchema,
     AssetBulkBoardSchema,
     AssetBulkMoveSchema,
-    AssetBulkDeleteSchema
+    AssetBulkDeleteSchema,
+    AssetBulkDownloadSchema,
+    BulkDownloadResponseSchema
 )
 from .utils import send_invitation_email, process_file_metadata, process_file_metadata_background, executor, accept_invitation, quick_file_metadata
 from .decorators import check_workspace_permission
@@ -343,9 +345,10 @@ def get_invite_info(request, token: str):
 def create_asset(
     request, 
     workspace_id: UUID,
-    board_id: UUID = None,
     file: UploadedFile = File(...),
+    board_id: Optional[UUID] = Form(None),
 ):
+    logger.info(f"Creating asset for workspace {workspace_id} with board {board_id}")
     workspace = get_object_or_404(Workspace, id=workspace_id)
     
     # Get quick metadata first
@@ -366,6 +369,15 @@ def create_asset(
             height=file_metadata.dimensions[1] if file_metadata.dimensions else None,
             name=file_metadata.name
         )
+        
+        # If board_id is provided, create the board-asset relationship
+        if board_id:
+            board = get_object_or_404(Board, workspace=workspace, id=board_id)
+            BoardAsset.objects.create(
+                board=board,
+                asset=asset,
+                added_by=request.user
+            )
         
         # Lambda will handle the detailed processing
         # The existing Lambda function should update the asset with additional metadata
@@ -391,14 +403,23 @@ def list_assets(
     workspace_id: UUID,
     page: int = 1,
     page_size: int = 60,
-    order_by: str = "-date_uploaded",  # Changed from created_at to date_created
+    order_by: str = "-date_uploaded",
     search: str = None,
+    board_id: Optional[UUID] = None,
 ):
+    """List assets in a workspace, optionally filtered by board"""
+    workspace = get_object_or_404(Workspace, id=workspace_id)
+    
     # Calculate offset
     offset = (page - 1) * page_size
     
-    # Base query
-    query = Asset.objects.filter(workspace_id=workspace_id)
+    # Base query with prefetched boards
+    query = Asset.objects.filter(workspace_id=workspace_id).prefetch_related('boards')
+    
+    # Filter by board if specified
+    if board_id:
+        board = get_object_or_404(Board, workspace=workspace, id=board_id)
+        query = query.filter(boards=board)
     
     # Add search filter if search term provided
     if search:
@@ -605,7 +626,7 @@ def create_board(request, workspace_id: UUID, data: BoardCreateSchema):
     board = Board.objects.create(
         workspace=workspace,
         name=data.name,
-        description=data.description,
+        description=data.description if data.description else None,
         parent=parent,
         created_by=request.user
     )
@@ -863,10 +884,10 @@ def bulk_delete_assets(request, workspace_id: UUID, data: AssetBulkDeleteSchema)
     
     return {"success": True, "deleted_count": count}
 
-@router.post("/workspaces/{workspace_id}/assets/bulk/download")
+@router.post("/workspaces/{workspace_id}/assets/bulk/download", response=BulkDownloadResponseSchema)
 @decorate_view(check_workspace_permission(WorkspaceMember.Role.COMMENTER))
-def bulk_download_assets(request, workspace_id: UUID, data: AssetBulkBoardSchema):
-    """Create a zip archive of multiple assets and provide a download link"""
+def bulk_download_assets(request, workspace_id: UUID, data: AssetBulkDownloadSchema):
+    """Create a server-side ZIP archive of multiple assets and provide a download link"""
     workspace = get_object_or_404(Workspace, id=workspace_id)
     
     # Get assets that belong to this workspace
@@ -879,55 +900,18 @@ def bulk_download_assets(request, workspace_id: UUID, data: AssetBulkBoardSchema
         raise HttpError(404, "No assets found for the provided IDs")
     
     try:
-        # Create temporary zip file
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.zip') as temp_file:
-            temp_path = temp_file.name
-        
-        # Create zip archive
-        with zipfile.ZipFile(temp_path, 'w', zipfile.ZIP_DEFLATED) as zip_file:
-            for asset in assets:
-                # Get the file path from the storage backend
-                file_name = os.path.basename(asset.file.name)
-                
-                try:
-                    # Add the file to the zip with its original name
-                    zip_file.write(asset.file.path, file_name)
-                except Exception as e:
-                    logger.error(f"Error adding asset {asset.id} to zip: {str(e)}")
-                    continue
-        
-        # Upload the zip to S3 with a temporary key
-        zip_key = f"temp/{workspace.id}/bulk-download-{uuid.uuid4()}.zip"
-        with open(temp_path, 'rb') as f:
-            s3_client.put_object(
-                Bucket=settings.AWS_STORAGE_BUCKET_NAME,
-                Key=zip_key,
-                Body=f.read()
-            )
-        
-        # Generate a presigned URL for downloading the zip
-        url = s3_client.generate_presigned_url(
-            'get_object',
-            Params={
-                'Bucket': settings.AWS_STORAGE_BUCKET_NAME,
-                'Key': zip_key,
-                'ResponseContentDisposition': 'attachment; filename="assets.zip"',
-                'ResponseContentType': 'application/zip'
-            },
-            ExpiresIn=3600  # URL valid for 1 hour
+        # Generate ZIP archive using AWS Lambda
+        zip_result = DownloadManager.create_zip_archive(
+            assets=list(assets),
+            zip_name=f"workspace-{workspace_id}-assets"
         )
         
-        # Clean up temporary file
-        os.unlink(temp_path)
-        
         return {
-            "download_url": url,
-            "expires_at": datetime.now() + timedelta(hours=1),
-            "asset_count": assets.count()
+            "download_url": zip_result["download_url"],
+            "expires_at": zip_result["expires_at"],
+            "asset_count": zip_result["file_count"],
+            "zip_size": zip_result["zip_size"]
         }
     except Exception as e:
         logger.error(f"Error creating bulk download: {str(e)}")
-        # Clean up temporary file if it exists
-        if os.path.exists(temp_path):
-            os.unlink(temp_path)
         raise HttpError(500, "Failed to create bulk download")
