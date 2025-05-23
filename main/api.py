@@ -41,7 +41,8 @@ from .schemas import (
     AssetBulkMoveSchema,
     AssetBulkDeleteSchema,
     AssetBulkDownloadSchema,
-    BulkDownloadResponseSchema
+    BulkDownloadResponseSchema,
+    BoardReorderSchema
 )
 from .utils import send_invitation_email, process_file_metadata, process_file_metadata_background, executor, accept_invitation, quick_file_metadata
 from .decorators import check_workspace_permission
@@ -89,7 +90,7 @@ def list_workspaces(request):
     )
     return workspaces
 
-@router.get("/workspaces/{workspace_id}", response=WorkspaceDataSchema)
+@router.get("/workspaces/{uuid:workspace_id}", response=WorkspaceDataSchema)
 @decorate_view(check_workspace_permission(WorkspaceMember.Role.COMMENTER))
 def get_workspace(request, workspace_id: UUID):
     # raise HttpError(403, "You are not a member of this workspace")
@@ -101,7 +102,7 @@ def get_workspace(request, workspace_id: UUID):
     return workspace
 
 
-@router.post("/workspaces/{workspace_id}/update", response=WorkspaceDataSchema)
+@router.post("/workspaces/{uuid:workspace_id}/update", response=WorkspaceDataSchema)
 @decorate_view(check_workspace_permission(WorkspaceMember.Role.ADMIN))
 def update_workspace(
     request, 
@@ -137,7 +138,7 @@ def update_workspace(
     
     return workspace
 
-@router.delete("/workspaces/{workspace_id}")
+@router.delete("/workspaces/{uuid:workspace_id}")
 @decorate_view(check_workspace_permission(WorkspaceMember.Role.ADMIN))
 def delete_workspace(request, workspace_id: UUID):
     workspace = get_object_or_404(Workspace, id=workspace_id)
@@ -146,7 +147,7 @@ def delete_workspace(request, workspace_id: UUID):
 
 
 # Get workspace members
-@router.get("/workspaces/{workspace_id}/members", response=List[WorkspaceMemberSchema])
+@router.get("/workspaces/{uuid:workspace_id}/members", response=List[WorkspaceMemberSchema])
 @decorate_view(check_workspace_permission(WorkspaceMember.Role.COMMENTER))
 def get_workspace_members(request, workspace_id: UUID):
     workspace = get_object_or_404(Workspace, id=workspace_id)
@@ -155,7 +156,7 @@ def get_workspace_members(request, workspace_id: UUID):
     return list(members)
 
 # Update workspace member role
-@router.put("/workspaces/{workspace_id}/members/{member_id}", response=WorkspaceMemberSchema)
+@router.put("/workspaces/{uuid:workspace_id}/members/{member_id}", response=WorkspaceMemberSchema)
 @decorate_view(check_workspace_permission(WorkspaceMember.Role.ADMIN))
 def update_workspace_member_role(request, workspace_id: UUID, member_id: int, data: WorkspaceMemberUpdateSchema):
     workspace = get_object_or_404(Workspace, id=workspace_id)
@@ -176,7 +177,7 @@ def update_workspace_member_role(request, workspace_id: UUID, member_id: int, da
     return member
 
 # Delete workspace member
-@router.delete("/workspaces/{workspace_id}/members/{member_id}")
+@router.delete("/workspaces/{uuid:workspace_id}/members/{member_id}")
 @decorate_view(check_workspace_permission(WorkspaceMember.Role.ADMIN))
 def delete_workspace_member(request, workspace_id: UUID, member_id: int):
     member = get_object_or_404(WorkspaceMember, id=member_id)
@@ -194,7 +195,7 @@ def delete_workspace_member(request, workspace_id: UUID, member_id: int):
     member.delete()
     return {"success": True}
 
-@router.get("/workspaces/{workspace_id}/subscription")
+@router.get("/workspaces/{uuid:workspace_id}/subscription")
 def get_subscription(request, workspace_id: UUID):
     logger.info(f"Getting subscription for workspace {workspace_id}")
     workspace = get_object_or_404(Workspace, id=workspace_id)
@@ -213,7 +214,7 @@ def get_subscription(request, workspace_id: UUID):
         "next_bill_date": workspace_subscription.data.get('next_billed_at')
     }
 
-@router.post("/workspaces/{workspace_id}/share")
+@router.post("/workspaces/{uuid:workspace_id}/share")
 @decorate_view(check_workspace_permission(WorkspaceMember.Role.EDITOR))
 def create_share_link(
     request, 
@@ -256,7 +257,7 @@ def access_shared_content(request, token: str):
         "content": share_link.content_object
     }
 
-@router.post("/workspaces/{workspace_id}/invites", response=WorkspaceInviteOut)
+@router.post("/workspaces/{uuid:workspace_id}/invites", response=WorkspaceInviteOut)
 @decorate_view(check_workspace_permission(WorkspaceMember.Role.ADMIN))
 def create_workspace_invite(request, workspace_id: UUID, data: WorkspaceInviteSchema):
     workspace = get_object_or_404(Workspace, id=workspace_id)
@@ -273,7 +274,7 @@ def create_workspace_invite(request, workspace_id: UUID, data: WorkspaceInviteSc
     
     return invitation
 
-@router.get("/workspaces/{workspace_id}/invites", response=List[WorkspaceInviteOut])
+@router.get("/workspaces/{uuid:workspace_id}/invites", response=List[WorkspaceInviteOut])
 @decorate_view(check_workspace_permission(WorkspaceMember.Role.COMMENTER))
 def get_workspace_invites(request, workspace_id: UUID):
     workspace = get_object_or_404(Workspace, id=workspace_id)
@@ -285,7 +286,7 @@ def get_workspace_invites(request, workspace_id: UUID):
     # Convert each invite to a WorkspaceInviteOut instance
     return invites
 
-@router.delete("/workspaces/{workspace_id}/invites/{invite_id}")
+@router.delete("/workspaces/{uuid:workspace_id}/invites/{invite_id}")
 @decorate_view(check_workspace_permission(WorkspaceMember.Role.ADMIN))
 def cancel_workspace_invite(request, workspace_id: UUID, invite_id: int):
     workspace = get_object_or_404(Workspace, id=workspace_id)
@@ -340,7 +341,7 @@ def get_invite_info(request, token: str):
     }
 
 
-@router.post("/workspaces/{workspace_id}/assets", response=AssetSchema)
+@router.post("/workspaces/{uuid:workspace_id}/assets", response=AssetSchema)
 @decorate_view(check_workspace_permission(WorkspaceMember.Role.EDITOR))
 def create_asset(
     request, 
@@ -387,7 +388,7 @@ def create_asset(
     
     return asset
 
-@router.get("/workspaces/{workspace_id}/assets/{asset_id}", response=AssetSchema)
+@router.get("/workspaces/{uuid:workspace_id}/assets/{uuid:asset_id}", response=AssetSchema)
 @decorate_view(check_workspace_permission(WorkspaceMember.Role.COMMENTER))
 def get_asset(request, workspace_id: UUID, asset_id: UUID):
     asset = get_object_or_404(
@@ -396,7 +397,7 @@ def get_asset(request, workspace_id: UUID, asset_id: UUID):
     )
     return asset
 
-@router.get("/workspaces/{workspace_id}/assets", response=List[AssetSchema])
+@router.get("/workspaces/{uuid:workspace_id}/assets", response=List[AssetSchema])
 @decorate_view(check_workspace_permission(WorkspaceMember.Role.COMMENTER))
 def list_assets(
     request,
@@ -475,7 +476,7 @@ def get_subscription_plans(request):
     
     return plans
 
-@router.post("/workspaces/{workspace_id}/subscription/cancel/{subscription_id}")
+@router.post("/workspaces/{uuid:workspace_id}/subscription/cancel/{subscription_id}")
 @decorate_view(check_workspace_permission(WorkspaceMember.Role.ADMIN))
 def cancel_subscription(request, workspace_id: UUID, subscription_id: str):
     workspace = get_object_or_404(Workspace, id=workspace_id)
@@ -508,7 +509,7 @@ class UpdateSubscriptionSchema(Schema):
     items: List[SubscriptionItemSchema]
     proration_billing_mode: str = "prorated_immediately"
 
-@router.post("/workspaces/{workspace_id}/subscription/{subscription_id}/preview")
+@router.post("/workspaces/{uuid:workspace_id}/subscription/{subscription_id}/preview")
 @decorate_view(check_workspace_permission(WorkspaceMember.Role.ADMIN))
 def preview_subscription_update(
     request, 
@@ -537,7 +538,7 @@ def preview_subscription_update(
         logger.error(f"Error previewing subscription update: {str(e)}")
         raise ValidationError("Failed to preview subscription update")
 
-@router.post("/workspaces/{workspace_id}/subscription/{subscription_id}/update")
+@router.post("/workspaces/{uuid:workspace_id}/subscription/{subscription_id}/update")
 @decorate_view(check_workspace_permission(WorkspaceMember.Role.ADMIN))
 def update_subscription(
     request, 
@@ -566,7 +567,7 @@ def update_subscription(
         logger.error(f"Error updating subscription: {str(e)}")
         raise ValidationError("Failed to update subscription")
 
-@router.get("/workspaces/{workspace_id}/subscription/transactions", response=List[TransactionSchema])
+@router.get("/workspaces/{uuid:workspace_id}/subscription/transactions", response=List[TransactionSchema])
 @decorate_view(check_workspace_permission(WorkspaceMember.Role.ADMIN))
 def get_subscription_transactions(request, workspace_id: UUID):
     workspace = get_object_or_404(Workspace, id=workspace_id)
@@ -588,7 +589,7 @@ def get_subscription_transactions(request, workspace_id: UUID):
         logger.error(f"Error fetching transactions: {str(e)}")
         raise HttpError(400, "Failed to fetch transactions")
 
-@router.get("/workspaces/{workspace_id}/subscription/update-payment-method")
+@router.get("/workspaces/{uuid:workspace_id}/subscription/update-payment-method")
 @decorate_view(check_workspace_permission(WorkspaceMember.Role.ADMIN))
 def get_subscription_update_payment_transaction(request, workspace_id: UUID):
     workspace = get_object_or_404(Workspace, id=workspace_id)
@@ -609,7 +610,7 @@ def get_subscription_update_payment_transaction(request, workspace_id: UUID):
         logger.error(f"Error getting update payment transaction: {str(e)}")
         raise HttpError(400, "Failed to get update payment transaction")
 
-@router.post("/workspaces/{workspace_id}/boards", response=BoardOutSchema)
+@router.post("/workspaces/{uuid:workspace_id}/boards", response=BoardOutSchema)
 @decorate_view(check_workspace_permission(WorkspaceMember.Role.EDITOR))
 def create_board(request, workspace_id: UUID, data: BoardCreateSchema):
     """Create a new board in the workspace"""
@@ -633,7 +634,7 @@ def create_board(request, workspace_id: UUID, data: BoardCreateSchema):
     
     return board
 
-@router.get("/workspaces/{workspace_id}/boards", response=List[BoardOutSchema])
+@router.get("/workspaces/{uuid:workspace_id}/boards", response=List[BoardOutSchema])
 @decorate_view(check_workspace_permission(WorkspaceMember.Role.COMMENTER))
 def list_boards(
     request, 
@@ -657,20 +658,18 @@ def list_boards(
             # Add all descendants
             boards.extend(parent.get_descendants())
             return boards
-        return list(Board.objects.filter(workspace=workspace, parent=parent_id))
+        return list(Board.objects.filter(workspace=workspace, parent=parent_id).prefetch_related('children'))
     else:
         # Return root boards (no parent)
-        root_boards = list(Board.objects.filter(workspace=workspace, parent=None))
+        logger.info(f"Getting root boards for workspace {workspace.id}")
+        root_boards = list(Board.objects.filter(workspace=workspace, parent=None).prefetch_related('children'))
         if recursive:
-            # Get all boards if recursive is True
-            all_boards = []
-            for root in root_boards:
-                all_boards.append(root)
-                all_boards.extend(root.get_descendants())
-            return all_boards
+            # When recursive is True, we only want the root boards with their children
+            # The children will be included in the response through the schema
+            return root_boards
         return root_boards
 
-@router.get("/workspaces/{workspace_id}/boards/{board_id}", response=BoardOutSchema)
+@router.get("/workspaces/{uuid:workspace_id}/boards/{uuid:board_id}", response=BoardOutSchema)
 @decorate_view(check_workspace_permission(WorkspaceMember.Role.COMMENTER))
 def get_board(request, workspace_id: UUID, board_id: UUID):
     """Get a specific board"""
@@ -680,7 +679,7 @@ def get_board(request, workspace_id: UUID, board_id: UUID):
     )
     return board
 
-@router.get("/workspaces/{workspace_id}/boards/{board_id}/ancestors", response=List[BoardOutSchema])
+@router.get("/workspaces/{uuid:workspace_id}/boards/{uuid:board_id}/ancestors", response=List[BoardOutSchema])
 @decorate_view(check_workspace_permission(WorkspaceMember.Role.COMMENTER))
 def get_board_ancestors(request, workspace_id: UUID, board_id: UUID):
     """Get all ancestor boards up to root"""
@@ -690,7 +689,7 @@ def get_board_ancestors(request, workspace_id: UUID, board_id: UUID):
     )
     return board.get_ancestors()
 
-@router.put("/workspaces/{workspace_id}/boards/{board_id}", response=BoardOutSchema)
+@router.put("/workspaces/{uuid:workspace_id}/boards/{uuid:board_id}", response=BoardOutSchema)
 @decorate_view(check_workspace_permission(WorkspaceMember.Role.EDITOR))
 def update_board(request, workspace_id: UUID, board_id: UUID, data: BoardUpdateSchema):
     """Update a board"""
@@ -707,19 +706,25 @@ def update_board(request, workspace_id: UUID, board_id: UUID, data: BoardUpdateS
         # Prevent circular references
         if data.parent_id == board.id:
             raise HttpError(400, "Board cannot be its own parent")
-        if data.parent_id in [b.id for b in board.get_descendants()]:
+        if isinstance(data.parent_id, UUID) and data.parent_id in [b.id for b in board.get_descendants()]:
             raise HttpError(400, "Cannot set a descendant as parent")
             
-        parent = get_object_or_404(
-            Board.objects.filter(workspace_id=workspace_id),
-            id=data.parent_id
-        )
-        board.parent = parent
+        # If parent_id is "root", set parent to None (root level)
+        if data.parent_id == "root":
+            logger.info(f"Setting board {board.id} to root level")
+            board.parent = None
+            board.level = 0
+        else:
+            parent = get_object_or_404(
+                Board.objects.filter(workspace_id=workspace_id),
+                id=data.parent_id
+            )
+            board.parent = parent
         
     board.save()
     return board
 
-@router.delete("/workspaces/{workspace_id}/boards/{board_id}")
+@router.delete("/workspaces/{uuid:workspace_id}/boards/{uuid:board_id}")
 @decorate_view(check_workspace_permission(WorkspaceMember.Role.EDITOR))
 def delete_board(request, workspace_id: UUID, board_id: UUID):
     """Delete a board"""
@@ -730,7 +735,7 @@ def delete_board(request, workspace_id: UUID, board_id: UUID):
     board.delete()
     return {"success": True}
 
-@router.post("/workspaces/{workspace_id}/assets/{asset_id}/download", response=DownloadResponseSchema)
+@router.post("/workspaces/{uuid:workspace_id}/assets/{uuid:asset_id}/download", response=DownloadResponseSchema)
 @decorate_view(check_workspace_permission(WorkspaceMember.Role.COMMENTER))
 def initiate_download(request, workspace_id: UUID, asset_id: UUID, data: DownloadInitiateSchema):
     """
@@ -753,7 +758,7 @@ def initiate_download(request, workspace_id: UUID, asset_id: UUID, data: Downloa
         logger.error(f"Error initiating download for asset {asset_id}: {str(e)}")
         raise HttpError(500, "Failed to initiate download")
 
-@router.post("/workspaces/{workspace_id}/assets/bulk/tags")
+@router.post("/workspaces/{uuid:workspace_id}/assets/bulk/tags")
 @decorate_view(check_workspace_permission(WorkspaceMember.Role.EDITOR))
 def bulk_update_tags(request, workspace_id: UUID, data: AssetBulkTagsSchema):
     """Update tags for multiple assets"""
@@ -773,7 +778,7 @@ def bulk_update_tags(request, workspace_id: UUID, data: AssetBulkTagsSchema):
     
     return {"success": True, "updated_count": assets.count()}
 
-@router.post("/workspaces/{workspace_id}/assets/bulk/favorite")
+@router.post("/workspaces/{uuid:workspace_id}/assets/bulk/favorite")
 @decorate_view(check_workspace_permission(WorkspaceMember.Role.COMMENTER))
 def bulk_toggle_favorite(request, workspace_id: UUID, data: AssetBulkFavoriteSchema):
     """Toggle favorite status for multiple assets"""
@@ -792,7 +797,7 @@ def bulk_toggle_favorite(request, workspace_id: UUID, data: AssetBulkFavoriteSch
     
     return {"success": True, "updated_count": assets.count()}
 
-@router.post("/workspaces/{workspace_id}/boards/{board_id}/assets")
+@router.post("/workspaces/{uuid:workspace_id}/boards/{uuid:board_id}/assets")
 @decorate_view(check_workspace_permission(WorkspaceMember.Role.EDITOR))
 def bulk_add_to_board(request, workspace_id: UUID, board_id: UUID, data: AssetBulkBoardSchema):
     """Add multiple assets to a board"""
@@ -815,7 +820,7 @@ def bulk_add_to_board(request, workspace_id: UUID, board_id: UUID, data: AssetBu
     
     return {"success": True, "added_count": count}
 
-@router.post("/workspaces/{workspace_id}/assets/bulk/move")
+@router.post("/workspaces/{uuid:workspace_id}/assets/bulk/move")
 @decorate_view(check_workspace_permission(WorkspaceMember.Role.EDITOR))
 def bulk_move_assets(request, workspace_id: UUID, data: AssetBulkMoveSchema):
     """Move multiple assets to a destination (workspace root or board)"""
@@ -844,7 +849,7 @@ def bulk_move_assets(request, workspace_id: UUID, data: AssetBulkMoveSchema):
     
     return {"success": True, "moved_count": assets.count()}
 
-@router.delete("/workspaces/{workspace_id}/boards/{board_id}/assets")
+@router.delete("/workspaces/{uuid:workspace_id}/boards/{uuid:board_id}/assets")
 @decorate_view(check_workspace_permission(WorkspaceMember.Role.EDITOR))
 def bulk_remove_from_board(request, workspace_id: UUID, board_id: UUID, data: AssetBulkBoardSchema):
     """Remove multiple assets from a board"""
@@ -866,7 +871,7 @@ def bulk_remove_from_board(request, workspace_id: UUID, board_id: UUID, data: As
     
     return {"success": True, "removed_count": count}
 
-@router.delete("/workspaces/{workspace_id}/assets/bulk")
+@router.delete("/workspaces/{uuid:workspace_id}/assets/bulk")
 @decorate_view(check_workspace_permission(WorkspaceMember.Role.ADMIN))
 def bulk_delete_assets(request, workspace_id: UUID, data: AssetBulkDeleteSchema):
     """Delete multiple assets"""
@@ -884,7 +889,7 @@ def bulk_delete_assets(request, workspace_id: UUID, data: AssetBulkDeleteSchema)
     
     return {"success": True, "deleted_count": count}
 
-@router.post("/workspaces/{workspace_id}/assets/bulk/download", response=BulkDownloadResponseSchema)
+@router.post("/workspaces/{uuid:workspace_id}/assets/bulk/download", response=BulkDownloadResponseSchema)
 @decorate_view(check_workspace_permission(WorkspaceMember.Role.COMMENTER))
 def bulk_download_assets(request, workspace_id: UUID, data: AssetBulkDownloadSchema):
     """Create a server-side ZIP archive of multiple assets and provide a download link"""
@@ -915,3 +920,17 @@ def bulk_download_assets(request, workspace_id: UUID, data: AssetBulkDownloadSch
     except Exception as e:
         logger.error(f"Error creating bulk download: {str(e)}")
         raise HttpError(500, "Failed to create bulk download")
+
+@router.post("/workspaces/{uuid:workspace_id}/boards/reorder", response={200: dict})
+@decorate_view(check_workspace_permission(WorkspaceMember.Role.EDITOR))
+def reorder_boards(request, workspace_id: UUID, data: List[BoardReorderSchema]):
+    """Reorder boards in a workspace"""
+    workspace = get_object_or_404(Workspace, id=workspace_id)
+    
+    with transaction.atomic():
+        for item in data:
+            board = get_object_or_404(Board, workspace=workspace, id=item.board_id)
+            board.order = item.new_order
+            board.save()
+    
+    return {"success": True}

@@ -11,6 +11,36 @@ logger.setLevel(logging.INFO)
 
 s3_client = boto3.client('s3')
 
+def get_file_extension(key):
+    """Extract file extension from S3 key or content type"""
+    # First try to get extension from the key
+    ext = os.path.splitext(key)[1]
+    if ext:
+        return ext
+    
+    # If no extension in key, try to determine from content type
+    try:
+        response = s3_client.head_object(Bucket=source_bucket, Key=key)
+        content_type = response.get('ContentType', '')
+        if content_type:
+            # Map common content types to extensions
+            content_type_map = {
+                'image/jpeg': '.jpg',
+                'image/png': '.png',
+                'image/gif': '.gif',
+                'application/pdf': '.pdf',
+                'text/plain': '.txt',
+                'application/msword': '.doc',
+                'application/vnd.openxmlformats-officedocument.wordprocessingml.document': '.docx',
+                'application/vnd.ms-excel': '.xls',
+                'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': '.xlsx'
+            }
+            return content_type_map.get(content_type, '')
+    except Exception as e:
+        logger.warning(f"Could not determine content type for {key}: {str(e)}")
+    
+    return ''
+
 def lambda_handler(event, context):
     """
     AWS Lambda function to create a ZIP archive from S3 objects
@@ -62,8 +92,15 @@ def lambda_handler(event, context):
             # Add each file to the ZIP
             for file_info in files:
                 key = file_info['key']
+                # Get the file extension
+                ext = get_file_extension(key)
+                
                 # Use provided filename or default to basename of key
                 filename = file_info.get('filename', os.path.basename(key))
+                
+                # Ensure filename has the correct extension
+                if not os.path.splitext(filename)[1] and ext:
+                    filename = f"{filename}{ext}"
                 
                 try:
                     # Download file from S3

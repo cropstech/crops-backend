@@ -7,6 +7,7 @@ from django.utils import timezone
 from django.conf import settings
 from django_paddle_billing.models import Subscription as PaddleSubscription
 import logging
+from mptt.models import MPTTModel, TreeForeignKey
 
 logger = logging.getLogger(__name__)
 
@@ -59,19 +60,19 @@ class Workspace(models.Model):
         
         # Debug logging
         all_subs = self.subscriptions.all()
-        logger.info(f"Workspace {self.id} subscriptions count: {all_subs.count()}")
+        # logger.info(f"Workspace {self.id} subscriptions count: {all_subs.count()}")
         
         subscription = all_subs.first()
-        logger.info(f"Subscription: {subscription}")
+        # logger.info(f"Subscription: {subscription}")
         
         if not subscription:
-            logger.warning(f"No subscription found for workspace {self.id}")
+            # logger.warning(f"No subscription found for workspace {self.id}")
             return {
                 'status': 'free',
                 'billing_details': None
             }
 
-        logger.info(f"Subscription data: {subscription.data}")
+        # logger.info(f"Subscription data: {subscription.data}")
         ends_at = subscription.data.get('ends_at')
         scheduled_change = subscription.data.get('scheduled_change')
         
@@ -83,7 +84,7 @@ class Workspace(models.Model):
         
         # Safely get billing cycle data
         billing_cycle = subscription.data.get('billing_cycle', {})
-        logger.info(f"Billing cycle: {billing_cycle}")
+        # logger.info(f"Billing cycle: {billing_cycle}")
         
         # Get first product safely
         product = subscription.products.first()
@@ -103,7 +104,7 @@ class Workspace(models.Model):
             }
         }
         
-        logger.info(f"Return data: {return_data}")
+        # logger.info(f"Return data: {return_data}")
         return return_data
 
     @property
@@ -249,18 +250,22 @@ class ShareLink(models.Model):
             return False
         return True
 
-class Board(models.Model):
+class Board(MPTTModel):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     name = models.CharField(max_length=200)
     description = models.TextField(blank=True, null=True)
     workspace = models.ForeignKey(Workspace, on_delete=models.CASCADE, related_name='boards')
-    parent = models.ForeignKey('self', on_delete=models.CASCADE, null=True, blank=True, related_name='children')
+    parent = TreeForeignKey('self', on_delete=models.CASCADE, null=True, blank=True, related_name='children')
     created_at = models.DateTimeField(auto_now_add=True)
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True)
     updated_at = models.DateTimeField(auto_now=True)
+    order = models.PositiveIntegerField(default=0, help_text="Order in which to display this board")
+
+    class MPTTMeta:
+        order_insertion_by = ['order', 'name']
 
     class Meta:
-        ordering = ['-created_at']
+        ordering = ['order', 'name']
 
     def __str__(self):
         return f"{self.name} - {self.workspace.name}"
@@ -278,45 +283,21 @@ class Board(models.Model):
     @property
     def level(self):
         """Get the nesting level of this board"""
-        level = 0
-        current = self
-        while current.parent:
-            level += 1
-            current = current.parent
-        return level
+        return self.get_level()
 
     def get_ancestors(self):
         """Get all parent boards up to root"""
-        ancestors = []
-        current = self.parent
-        while current:
-            ancestors.append(current)
-            current = current.parent
-        return ancestors
+        return super().get_ancestors()
 
     def get_descendants(self):
-        """Get all child boards recursively using a more efficient query"""
-        descendants = []
-        to_process = list(self.children.all())
-        
-        while to_process:
-            current = to_process.pop(0)
-            descendants.append(current)
-            to_process.extend(current.children.all())
-            
-        return descendants
+        """Get all descendant boards"""
+        return super().get_descendants()
 
     def get_all_descendants_query(self):
         """
-        Alternative method that gets all descendants in a single query
-        More efficient for large hierarchies
+        Get all descendants in a single query
         """
-        return Board.objects.filter(
-            workspace=self.workspace,
-            parent__in=Board.objects.filter(
-                workspace=self.workspace
-            ).get_descendants(include_self=True)
-        ).select_related('parent', 'created_by')
+        return self.get_descendants().select_related('parent', 'created_by')
 
 class Asset(models.Model):
     ASSET_TYPES = [

@@ -1,5 +1,5 @@
 from ninja import Schema, ModelSchema
-from typing import List, Optional
+from typing import List, Optional, Union
 from datetime import datetime
 from uuid import UUID
 from pydantic import ConfigDict, BaseModel, Field
@@ -138,7 +138,7 @@ class BoardCreateSchema(Schema):
 class BoardUpdateSchema(Schema):
     name: Optional[str] = None
     description: Optional[str] = None
-    parent_id: Optional[UUID] = None
+    parent_id: Optional[Union[UUID, str]] = None
 
 class BoardOutSchema(Schema):
     id: UUID
@@ -151,6 +151,7 @@ class BoardOutSchema(Schema):
     is_root: bool
     level: int
     child_count: int
+    children: Optional[List['BoardOutSchema']] = None
     
     model_config = ConfigDict(
         from_attributes=True
@@ -256,3 +257,10 @@ class AssetSchema(Schema):
             # Get the full path and remove the filename
             return dirname(obj.file.name)
         return None
+
+class BoardReorderSchema(Schema):
+    board_id: UUID
+    new_order: int
+
+class BoardReorderRequestSchema(Schema):
+    items: List[BoardReorderSchema]
