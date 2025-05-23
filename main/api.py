@@ -44,7 +44,10 @@ from .schemas import (
     BulkDownloadResponseSchema,
     BoardReorderSchema
 )
-from .utils import send_invitation_email, process_file_metadata, process_file_metadata_background, executor, accept_invitation, quick_file_metadata
+from .utils import (
+    send_invitation_email, process_file_metadata, process_file_metadata_background, 
+    executor, accept_invitation, quick_file_metadata, generate_workspace_avatar
+)
 from .decorators import check_workspace_permission
 from django_paddle_billing.models import Product, Subscription, Price, paddle_client
 from paddle_billing_client.models.subscription import SubscriptionRequest
@@ -61,11 +64,20 @@ logger = logging.getLogger(__name__)
 
 @router.post("/workspaces/create", response=WorkspaceDataSchema)
 def create_workspace(request, data: WorkspaceCreateSchema):
-    workspace = Workspace.objects.create(
-        name=data.name,
-        description=data.description,
-        avatar=data.avatar
-    )
+    # Generate avatar if none provided
+    if not data.avatar:
+        avatar_file = generate_workspace_avatar()
+        workspace = Workspace.objects.create(
+            name=data.name,
+            description=data.description,
+            avatar=avatar_file
+        )
+    else:
+        workspace = Workspace.objects.create(
+            name=data.name,
+            description=data.description,
+            avatar=data.avatar
+        )
     
     WorkspaceMember.objects.create(
         workspace=workspace,
@@ -107,7 +119,7 @@ def get_workspace(request, workspace_id: UUID):
 def update_workspace(
     request, 
     workspace_id: UUID,
-    file: UploadedFile = File(...),  # Required file upload
+    file: Optional[UploadedFile] = File(None),  # Required file upload
     name: Optional[str] = Form(None),  # Optional name update
     description: Optional[str] = Form(None)  # Optional description update
 ):
@@ -121,7 +133,7 @@ def update_workspace(
         
         # Save new avatar to storage
         file_path = default_storage.save(
-            f'workspaces/{workspace.id}/avatars/{file.name}', 
+            f'avatars/{file.name}', 
             file
         )
         

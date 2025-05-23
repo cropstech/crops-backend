@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 def workspace_avatar_path(instance, filename):
     """Generate upload path for workspace avatars"""
     ext = filename.split('.')[-1].lower()
-    return f'workspaces/{instance.id}/avatars/{uuid.uuid4()}.{ext}'
+    return f'avatars/{uuid.uuid4()}.{ext}'
 
 def workspace_asset_path(instance, filename):
     """Generate upload path for workspace assets"""

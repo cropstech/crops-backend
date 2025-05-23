@@ -25,6 +25,13 @@ from django.utils import timezone
 from ninja.errors import HttpError
 from django.shortcuts import get_object_or_404
 from .models import WorkspaceInvitation, WorkspaceMember
+import PIL.Image
+import os
+from dicebear import DAvatar, DStyle, DOptions, DColor, DFormat, bulk_create
+from django.core.files.base import ContentFile
+import io
+import uuid
+
 
 logger = logging.getLogger(__name__)
 
@@ -338,3 +345,58 @@ def quick_file_metadata(file_or_path) -> FileMetadata:
     finally:
         if isinstance(file_or_path, str):
             file.close()
+
+def generate_workspace_avatar(size=200):
+    """
+    Generate a colorful geometric avatar using DiceBear.
+    This provides consistent, high-quality avatars with good color variety.
+    """
+    # Create a unique seed for the avatar
+    seed = str(uuid.uuid4())
+    
+    # Create avatar with shapes style
+    av = DAvatar(
+        style=DStyle.shapes,
+        seed=seed,
+        options=DOptions(
+            size=size,
+            backgroundColor=DColor("073b4c"),
+        )
+    )
+    
+    try:
+        # Editing the style specific customisations
+        av.customise(
+            blank_options={
+                "shape1Color": "ef476f",
+                "shape2Color": "06d6a0",
+                "shape3Color": "ffd166"
+            }
+        )
+        # Save directly as PNG
+        av.save(
+            location=None,  # Current directory
+            file_name=f"{seed}",
+            file_format=DFormat.png,
+            overwrite=True,
+            open_after_save=False
+        )
+        
+        # Read the saved file
+        with open(f"{seed}.png", 'rb') as f:
+            image_data = f.read()
+            
+        # Clean up the temporary file
+        os.remove(f"{seed}.png")
+        
+        # Create a ContentFile from the image data
+        return ContentFile(image_data, name=f'{seed}.png')
+        
+    except Exception as e:
+        logger.error(f"Error generating avatar: {str(e)}")
+        # Fallback to a simple colored square if generation fails
+        image = Image.new('RGB', (size, size), '#E0E0E0')
+        buffer = io.BytesIO()
+        image.save(buffer, format='PNG')
+        buffer.seek(0)
+        return ContentFile(buffer.getvalue(), name=f'{seed}.png')
