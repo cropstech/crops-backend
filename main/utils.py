@@ -196,7 +196,7 @@ def process_file_metadata(file_or_path, user) -> FileMetadata:
             else:
                 date_created = datetime.fromtimestamp(os.path.getctime(file_or_path.temporary_file_path()))
         except:
-            date_created = datetime.now()
+            date_created = timezone.now()
 
         # Clean all metadata before returning
         metadata = clean_metadata_for_json(metadata)
@@ -339,7 +339,7 @@ def quick_file_metadata(file_or_path) -> FileMetadata:
             size=file_size,
             dimensions=dimensions,
             duration=None,  # Let Lambda handle this
-            date_created=datetime.now(),  # Simple current timestamp
+            date_created=timezone.now(),  # Simple current timestamp
             metadata={}  # Let Lambda handle detailed metadata
         )
     finally:

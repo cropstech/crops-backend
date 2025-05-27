@@ -8,6 +8,7 @@ from typing import List, Optional, Tuple, Dict
 import logging
 from .models import Asset
 import json
+from django.utils import timezone
 
 logger = logging.getLogger(__name__)
 
@@ -116,7 +117,7 @@ class DownloadManager:
         key = asset.file.name
         total_size = asset.size
         download_id = str(uuid.uuid4())
-        expires_at = datetime.now() + timedelta(seconds=cls.URL_EXPIRY)
+        expires_at = timezone.now() + timedelta(seconds=cls.URL_EXPIRY)
 
         if not use_multipart or total_size <= cls.DEFAULT_PART_SIZE:
             # Single file download
@@ -168,7 +169,7 @@ class DownloadManager:
         bucket = settings.AWS_STORAGE_BUCKET_NAME
         
         # Generate a unique key for the output ZIP file
-        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        timestamp = timezone.now().strftime("%Y%m%d-%H%M%S")
         zip_name = zip_name or f"archive-{timestamp}"
         output_key = f"temp/zips/{zip_name}-{uuid.uuid4()}.zip"
         
@@ -215,7 +216,7 @@ class DownloadManager:
                 # If Lambda didn't return a presigned URL, generate one
                 download_url = cls.get_presigned_url(bucket, output_key)
             
-            expires_at = datetime.now() + timedelta(seconds=cls.URL_EXPIRY)
+            expires_at = timezone.now() + timedelta(seconds=cls.URL_EXPIRY)
             
             return {
                 "download_url": download_url,

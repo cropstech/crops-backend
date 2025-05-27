@@ -9,6 +9,7 @@ import logging
 from ninja.security import APIKeyHeader
 from .models import Asset, AssetAnalysis
 from datetime import datetime
+from django.utils import timezone
 logger = logging.getLogger(__name__)
 
 # Create API Key authentication
@@ -131,7 +132,7 @@ def asset_processed_webhook(request):
                 if format_data.get('creation_time') and format_data.get('creation_time').strip():
                     asset.date_created = format_data['creation_time']
                 else:
-                    asset.date_created = datetime.now()
+                    asset.date_created = timezone.now()
 
             
             # Update mime type from codec if available

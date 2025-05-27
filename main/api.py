@@ -282,7 +282,7 @@ def create_workspace_invite(request, workspace_id: UUID, data: WorkspaceInviteSc
         email=data.email,
         role=data.role,
         invited_by=request.user,
-        expires_at=data.expires_at or datetime.now() + timedelta(days=7)
+        expires_at=data.expires_at or timezone.now() + timedelta(days=7)
     )
     
     send_invitation_email(invitation)
@@ -358,7 +358,7 @@ def get_invite_info(request, token: str):
 
 @router.post("/workspaces/{uuid:workspace_id}/assets/upload", response=UploadResponseSchema)
 @decorate_view(check_workspace_permission(WorkspaceMember.Role.EDITOR))
-def create_asset(
+def upload_file(
     request, 
     workspace_id: UUID,
     file: UploadedFile = File(...),
@@ -444,7 +444,7 @@ def complete_upload(
 ):
     """
     Complete a multipart upload for an existing asset.
-    This is used when create_asset initiated a multipart upload.
+    This is used when upload_file initiated a multipart upload.
     """
     workspace = get_object_or_404(Workspace, id=workspace_id)
     
@@ -477,7 +477,7 @@ def upload_folder(
 ):
     """
     Upload a folder structure, creating boards for each folder and uploading files to their respective boards.
-    The files parameter should be a list of files with their relative paths preserved.
+    Since Django strips folder paths from uploaded files, the frontend should send file paths as form data.
     """
     workspace = get_object_or_404(Workspace, id=workspace_id)
     
@@ -493,18 +493,38 @@ def upload_folder(
     boards_by_path = {}
     created_boards = []
     
+    # Extract file paths from form data
+    file_paths = []
+    for key, value in request.POST.items():
+        if key.startswith('file_paths[') and key.endswith(']'):
+            index = int(key[11:-1])  # Extract index from file_paths[0], file_paths[1], etc.
+            # Ensure we have enough slots in the list
+            while len(file_paths) <= index:
+                file_paths.append(None)
+            file_paths[index] = value
+    
+    logger.info(f"Received {len(files)} files with paths: {file_paths}")
+    
     with transaction.atomic():
-        for file in files:
-            # Get the relative path of the file
-            path_parts = file.name.split('/')
-            filename = path_parts[-1]
-            folder_path = '/'.join(path_parts[:-1])
+        # Process each uploaded file with its corresponding path
+        for i, file in enumerate(files):
+            # Get the relative path from form data, fallback to filename
+            relative_path = file_paths[i] if i < len(file_paths) and file_paths[i] else file.name
+            
+            logger.info(f"Processing file {i}: {relative_path}")
+            
+            # Parse the folder structure from the relative path
+            path_parts = relative_path.split('/')
+            filename = path_parts[-1]  # The actual filename
+            folder_parts = path_parts[:-1]  # All folder parts except the filename
+            
+            logger.info(f"File: {filename}, folders: {folder_parts}")
             
             # Create boards for each folder in the path
             current_path = ""
             current_parent = parent_board
             
-            for folder_name in folder_path.split('/'):
+            for folder_name in folder_parts:
                 if not folder_name:  # Skip empty parts
                     continue
                     
@@ -512,6 +532,7 @@ def upload_folder(
                 
                 # Create board if it doesn't exist
                 if current_path not in boards_by_path:
+                    logger.info(f"Creating board: {folder_name} at path: {current_path}")
                     board = Board.objects.create(
                         workspace=workspace,
                         name=folder_name,
@@ -520,46 +541,58 @@ def upload_folder(
                     )
                     boards_by_path[current_path] = board
                     created_boards.append(board)
+                else:
+                    logger.info(f"Board already exists at path: {current_path}")
                 
                 current_parent = boards_by_path[current_path]
             
-            # Upload the file to the last created board
-            if current_parent:
-                # Get quick metadata first
-                file_metadata = quick_file_metadata(file)
-                
-                # Initiate upload with Transfer Acceleration
-                upload_info = UploadManager.initiate_upload(
-                    filename=filename,
-                    content_type=file_metadata.mime_type,
-                    size=file.size,
-                    use_multipart=file.size > UploadManager.DEFAULT_PART_SIZE
-                )
-                
-                # Create asset
-                asset = Asset.objects.create(
-                    workspace=workspace,
-                    created_by=request.user,
-                    file=upload_info['key'],
-                    status=Asset.Status.PROCESSING,
-                    size=file.size,
-                    file_type=file_metadata.file_type,
-                    mime_type=file_metadata.mime_type,
-                    file_extension=file_metadata.file_extension,
-                    width=file_metadata.dimensions[0] if file_metadata.dimensions else None,
-                    height=file_metadata.dimensions[1] if file_metadata.dimensions else None,
-                    name=filename
-                )
-                
-                # Add to board
+            # Upload the file to the target board (or root if no folders)
+            target_board = current_parent if folder_parts else parent_board
+            
+            # Get quick metadata first
+            file_metadata = quick_file_metadata(file)
+            
+            # Create asset with initial metadata first (with temporary file path)
+            asset = Asset.objects.create(
+                workspace=workspace,
+                created_by=request.user,
+                file="temp",  # Temporary value, will be updated below
+                status=Asset.Status.PROCESSING,
+                size=file.size,
+                file_type=file_metadata.file_type,
+                mime_type=file_metadata.mime_type,
+                file_extension=file_metadata.file_extension,
+                width=file_metadata.dimensions[0] if file_metadata.dimensions else None,
+                height=file_metadata.dimensions[1] if file_metadata.dimensions else None,
+                name=filename
+            )
+            
+            # Generate the correct S3 key using workspace_asset_path
+            from .models import workspace_asset_path
+            s3_key = workspace_asset_path(asset, filename)
+            
+            # Update the asset with the correct file path
+            asset.file = s3_key
+            asset.save()
+            
+            # Save the file to S3 using Django's storage backend
+            # This will automatically use the correct S3 configuration
+            saved_path = default_storage.save(s3_key, file)
+            asset.file = saved_path
+            asset.save()
+            
+            logger.info(f"Saved file to S3: {saved_path}")
+            
+            # Add to board if we have one
+            if target_board:
                 BoardAsset.objects.create(
-                    board=current_parent,
+                    board=target_board,
                     asset=asset,
                     added_by=request.user
                 )
-                
-                # Start background processing
-                process_file_metadata_background.delay(asset.id, upload_info['key'], request.user.id)
+                logger.info(f"Added asset {asset.id} to board {target_board.name}")
+            else:
+                logger.info(f"Asset {asset.id} added to workspace root (no board)")
     
     return created_boards
 

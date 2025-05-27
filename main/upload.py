@@ -8,6 +8,7 @@ from typing import List, Optional, Dict
 import logging
 from .models import Asset
 import json
+from django.utils import timezone
 
 logger = logging.getLogger(__name__)
 
@@ -81,7 +82,7 @@ class UploadManager:
             key = f"uploads/{uuid.uuid4()}/{filename}"
             
         upload_id = str(uuid.uuid4())
-        expires_at = datetime.now() + timedelta(seconds=cls.URL_EXPIRY)
+        expires_at = timezone.now() + timedelta(seconds=cls.URL_EXPIRY)
 
         if not use_multipart or size <= cls.DEFAULT_PART_SIZE:
             # Single file upload
