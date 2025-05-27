@@ -42,7 +42,9 @@ from .schemas import (
     AssetBulkDeleteSchema,
     AssetBulkDownloadSchema,
     BulkDownloadResponseSchema,
-    BoardReorderSchema
+    BoardReorderSchema,
+    UploadCompleteSchema,
+    UploadResponseSchema
 )
 from .utils import (
     send_invitation_email, process_file_metadata, process_file_metadata_background, 
@@ -55,6 +57,7 @@ from .download import DownloadManager
 import os
 import zipfile
 import tempfile
+from .upload import UploadManager
 
 router = Router(tags=["main"], auth=django_auth)
 
@@ -353,7 +356,7 @@ def get_invite_info(request, token: str):
     }
 
 
-@router.post("/workspaces/{uuid:workspace_id}/assets", response=AssetSchema)
+@router.post("/workspaces/{uuid:workspace_id}/assets/upload", response=UploadResponseSchema)
 @decorate_view(check_workspace_permission(WorkspaceMember.Role.EDITOR))
 def create_asset(
     request, 
@@ -361,44 +364,205 @@ def create_asset(
     file: UploadedFile = File(...),
     board_id: Optional[UUID] = Form(None),
 ):
+    """
+    Create an asset and initiate file upload using UploadManager for better performance and reliability.
+    Returns presigned URL information for client-side upload.
+    """
     logger.info(f"Creating asset for workspace {workspace_id} with board {board_id}")
     workspace = get_object_or_404(Workspace, id=workspace_id)
     
     # Get quick metadata first
     file_metadata = quick_file_metadata(file)
     
-    # Create asset with initial metadata
-    with transaction.atomic():
-        asset = Asset.objects.create(
-            workspace=workspace,
-            created_by=request.user,
-            file=file,
-            status=Asset.Status.PROCESSING,
-            size=file.size,
-            file_type=file_metadata.file_type,
-            mime_type=file_metadata.mime_type,
-            file_extension=file_metadata.file_extension,
-            width=file_metadata.dimensions[0] if file_metadata.dimensions else None,
-            height=file_metadata.dimensions[1] if file_metadata.dimensions else None,
-            name=file_metadata.name
-        )
-        
-        # If board_id is provided, create the board-asset relationship
-        if board_id:
-            board = get_object_or_404(Board, workspace=workspace, id=board_id)
-            BoardAsset.objects.create(
-                board=board,
-                asset=asset,
-                added_by=request.user
+    # Check if Transfer Acceleration is enabled
+    if not UploadManager.check_transfer_acceleration():
+        logger.warning("Transfer Acceleration is not enabled for the bucket. Uploads may be slower.")
+    
+    try:
+        # Create asset with initial metadata first (with temporary file path)
+        with transaction.atomic():
+            asset = Asset.objects.create(
+                workspace=workspace,
+                created_by=request.user,
+                file="temp",  # Temporary value, will be updated below
+                status=Asset.Status.PROCESSING,
+                size=file.size,
+                file_type=file_metadata.file_type,
+                mime_type=file_metadata.mime_type,
+                file_extension=file_metadata.file_extension,
+                width=file_metadata.dimensions[0] if file_metadata.dimensions else None,
+                height=file_metadata.dimensions[1] if file_metadata.dimensions else None,
+                name=file_metadata.name
             )
+            
+            # Generate the correct S3 key using workspace_asset_path
+            from .models import workspace_asset_path
+            s3_key = workspace_asset_path(asset, file.name)
+            
+            # Update the asset with the correct file path
+            asset.file = s3_key
+            asset.save()
+            
+            # Initiate upload with UploadManager using the correct key
+            upload_info = UploadManager.initiate_upload(
+                filename=file.name,
+                content_type=file_metadata.mime_type,
+                size=file.size,
+                use_multipart=file.size > UploadManager.DEFAULT_PART_SIZE,
+                s3_key=s3_key  # Pass the correct S3 key
+            )
+            
+            # If board_id is provided, create the board-asset relationship
+            if board_id:
+                board = get_object_or_404(Board, workspace=workspace, id=board_id)
+                BoardAsset.objects.create(
+                    board=board,
+                    asset=asset,
+                    added_by=request.user
+                )
         
-        # Lambda will handle the detailed processing
-        # The existing Lambda function should update the asset with additional metadata
+        # Add asset_id to the upload info response
+        upload_info['asset_id'] = asset.id
+        
+        logger.debug(f"Asset created: {asset.id} with file: {file.name}")
+        logger.debug(f"S3 key: {s3_key}")
+        logger.debug(f"Initial metadata extracted: {file_metadata.file_type}, size: {file_metadata.size}")
+        
+        return upload_info
+        
+    except Exception as e:
+        logger.error(f"Error creating asset: {str(e)}")
+        raise HttpError(500, "Failed to create asset")
+
+
+@router.post("/workspaces/{uuid:workspace_id}/assets/upload/complete")
+@decorate_view(check_workspace_permission(WorkspaceMember.Role.EDITOR))
+def complete_upload(
+    request,
+    workspace_id: UUID,
+    data: UploadCompleteSchema,
+):
+    """
+    Complete a multipart upload for an existing asset.
+    This is used when create_asset initiated a multipart upload.
+    """
+    workspace = get_object_or_404(Workspace, id=workspace_id)
     
-    logger.debug(f"Asset created: {asset.id} with file: {file.name}")
-    logger.debug(f"Initial metadata extracted: {file_metadata.file_type}, size: {file_metadata.size}")
+    try:
+        # Complete multipart upload if needed
+        if data.parts:
+            logger.info(f"Completing multipart upload for key: {data.key} with {len(data.parts)} parts")
+            UploadManager.complete_multipart_upload(
+                upload_id=data.upload_id,
+                key=data.key,
+                parts=data.parts
+            )
+            logger.info(f"Multipart upload completed successfully for key: {data.key}")
+        
+        # The asset should already exist, so just return success
+        # The Lambda function will handle updating the asset status
+        return {"success": True, "message": "Upload completed successfully"}
+        
+    except Exception as e:
+        logger.error(f"Error completing upload: {str(e)}")
+        raise HttpError(500, "Failed to complete upload")
+
+@router.post("/workspaces/{uuid:workspace_id}/upload-folder", response=List[BoardOutSchema])
+@decorate_view(check_workspace_permission(WorkspaceMember.Role.EDITOR))
+def upload_folder(
+    request,
+    workspace_id: UUID,
+    files: List[UploadedFile] = File(...),
+    parent_board_id: Optional[UUID] = Form(None),
+):
+    """
+    Upload a folder structure, creating boards for each folder and uploading files to their respective boards.
+    The files parameter should be a list of files with their relative paths preserved.
+    """
+    workspace = get_object_or_404(Workspace, id=workspace_id)
     
-    return asset
+    # Get parent board if specified
+    parent_board = None
+    if parent_board_id:
+        parent_board = get_object_or_404(
+            Board.objects.filter(workspace_id=workspace_id),
+            id=parent_board_id
+        )
+    
+    # Track created boards by path
+    boards_by_path = {}
+    created_boards = []
+    
+    with transaction.atomic():
+        for file in files:
+            # Get the relative path of the file
+            path_parts = file.name.split('/')
+            filename = path_parts[-1]
+            folder_path = '/'.join(path_parts[:-1])
+            
+            # Create boards for each folder in the path
+            current_path = ""
+            current_parent = parent_board
+            
+            for folder_name in folder_path.split('/'):
+                if not folder_name:  # Skip empty parts
+                    continue
+                    
+                current_path = f"{current_path}/{folder_name}" if current_path else folder_name
+                
+                # Create board if it doesn't exist
+                if current_path not in boards_by_path:
+                    board = Board.objects.create(
+                        workspace=workspace,
+                        name=folder_name,
+                        parent=current_parent,
+                        created_by=request.user
+                    )
+                    boards_by_path[current_path] = board
+                    created_boards.append(board)
+                
+                current_parent = boards_by_path[current_path]
+            
+            # Upload the file to the last created board
+            if current_parent:
+                # Get quick metadata first
+                file_metadata = quick_file_metadata(file)
+                
+                # Initiate upload with Transfer Acceleration
+                upload_info = UploadManager.initiate_upload(
+                    filename=filename,
+                    content_type=file_metadata.mime_type,
+                    size=file.size,
+                    use_multipart=file.size > UploadManager.DEFAULT_PART_SIZE
+                )
+                
+                # Create asset
+                asset = Asset.objects.create(
+                    workspace=workspace,
+                    created_by=request.user,
+                    file=upload_info['key'],
+                    status=Asset.Status.PROCESSING,
+                    size=file.size,
+                    file_type=file_metadata.file_type,
+                    mime_type=file_metadata.mime_type,
+                    file_extension=file_metadata.file_extension,
+                    width=file_metadata.dimensions[0] if file_metadata.dimensions else None,
+                    height=file_metadata.dimensions[1] if file_metadata.dimensions else None,
+                    name=filename
+                )
+                
+                # Add to board
+                BoardAsset.objects.create(
+                    board=current_parent,
+                    asset=asset,
+                    added_by=request.user
+                )
+                
+                # Start background processing
+                process_file_metadata_background.delay(asset.id, upload_info['key'], request.user.id)
+    
+    return created_boards
+
 
 @router.get("/workspaces/{uuid:workspace_id}/assets/{uuid:asset_id}", response=AssetSchema)
 @decorate_view(check_workspace_permission(WorkspaceMember.Role.COMMENTER))

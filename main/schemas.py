@@ -1,5 +1,5 @@
 from ninja import Schema, ModelSchema
-from typing import List, Optional, Union
+from typing import List, Optional, Union, Dict
 from datetime import datetime
 from uuid import UUID
 from pydantic import ConfigDict, BaseModel, Field
@@ -264,3 +264,24 @@ class BoardReorderSchema(Schema):
 
 class BoardReorderRequestSchema(Schema):
     items: List[BoardReorderSchema]
+
+class UploadPartSchema(Schema):
+    part_number: int
+    start_byte: int
+    end_byte: int
+    url: str
+    expires_at: datetime
+
+class UploadResponseSchema(Schema):
+    upload_id: str
+    key: str
+    asset_id: Optional[UUID] = None  # Asset ID for tracking processing status
+    total_parts: Optional[int] = None
+    parts: Optional[List[UploadPartSchema]] = None
+    direct_url: Optional[str] = None  # For single file uploads
+    expires_at: datetime
+
+class UploadCompleteSchema(Schema):
+    upload_id: str
+    key: str
+    parts: List[Dict]  # List of parts with ETags

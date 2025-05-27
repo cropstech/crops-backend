@@ -70,7 +70,8 @@ def asset_processed_webhook(request):
             logger.error("Invalid JSON in webhook request body")
             raise HttpError(400, "Invalid JSON in request body")
 
-        logger.info(f"Received webhook for asset processing: {body}")
+        logger.info(f"Received webhook for asset processing")
+        # logger.info(f"Body: {body}")
         
         # Validate required fields
         asset_id = body.get('asset_id')
