@@ -271,6 +271,11 @@ class Board(MPTTModel):
         return f"{self.name} - {self.workspace.name}"
 
     @property
+    def thumbnail(self):
+        """Get the first image asset in this board to use as a thumbnail"""
+        return self.assets.filter(file_type='IMAGE').first().file.url if self.assets.filter(file_type='IMAGE').first() else None
+
+    @property
     def asset_count(self):
         """Get the number of assets in this board"""
         return self.assets.count()

@@ -152,6 +152,7 @@ class BoardOutSchema(Schema):
     level: int
     child_count: int
     children: Optional[List['BoardOutSchema']] = None
+    thumbnail: Optional[str] = None
     
     model_config = ConfigDict(
         from_attributes=True
