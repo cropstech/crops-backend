@@ -429,3 +429,250 @@ class AssetAnalysis(models.Model):
     
     class Meta:
         verbose_name_plural = "Asset analyses"
+
+class AIActionChoices(models.TextChoices):
+    SPELLING_GRAMMAR = 'spelling_grammar', 'Spelling and Grammar Check'
+    COLOR_CONTRAST = 'color_contrast', 'Color Contrast Analysis'
+    IMAGE_QUALITY = 'image_quality', 'Image Quality Check'
+    IMAGE_ARTIFACTS = 'image_artifacts', 'Image Artifacts Detection'
+
+class AIActionDefinition:
+    """
+    Static definitions for AI action configurations and metadata.
+    This class acts as a registry of all available AI actions.
+    """
+    
+    DEFINITIONS = {
+        AIActionChoices.SPELLING_GRAMMAR: {
+            'description': 'Checks for spelling and grammar errors in visible text',
+            'supported_asset_types': ['DOCUMENT', 'IMAGE'],
+            'configuration_schema': {
+                'properties': {
+                    'language': {
+                        'type': 'string',
+                        'enum': ['en', 'es', 'fr']
+                    },
+                    'check_spelling': {
+                        'type': 'boolean',
+                        'default': True
+                    },
+                    'check_grammar': {
+                        'type': 'boolean',
+                        'default': True
+                    }
+                }
+            }
+        },
+        AIActionChoices.COLOR_CONTRAST: {
+            'description': 'Analyzes color contrast for accessibility compliance',
+            'supported_asset_types': ['IMAGE'],
+            'configuration_schema': {
+                'properties': {
+                    'wcag_level': {
+                        'type': 'string',
+                        'enum': ['AA', 'AAA'],
+                        'default': 'AA'
+                    }
+                }
+            }
+        },
+        AIActionChoices.IMAGE_QUALITY: {
+            'description': 'Checks for resolution and image quality problems',
+            'supported_asset_types': ['IMAGE'],
+            'configuration_schema': {
+                'properties': {
+                    'min_resolution': {
+                        'type': 'integer',
+                        'default': 1920
+                    },
+                    'check_compression': {
+                        'type': 'boolean',
+                        'default': True
+                    }
+                }
+            }
+        },
+        AIActionChoices.IMAGE_ARTIFACTS: {
+            'description': 'Detects pixelation, blurriness, or compression artifacts',
+            'supported_asset_types': ['IMAGE'],
+            'configuration_schema': {
+                'properties': {
+                    'sensitivity': {
+                        'type': 'string',
+                        'enum': ['low', 'medium', 'high'],
+                        'default': 'medium'
+                    }
+                }
+            }
+        }
+    }
+
+    @classmethod
+    def get_definition(cls, action_id):
+        """Get the definition for a specific action"""
+        return cls.DEFINITIONS.get(action_id)
+
+    @classmethod
+    def get_supported_actions(cls, asset_type=None):
+        """Get list of supported actions, optionally filtered by asset type"""
+        if not asset_type:
+            return list(cls.DEFINITIONS.keys())
+            
+        return [
+            action_id for action_id, definition in cls.DEFINITIONS.items()
+            if asset_type in definition['supported_asset_types']
+        ]
+
+class CustomField(models.Model):
+    FIELD_TYPES = [
+        ('SINGLE_SELECT', 'Single Select'),
+        ('MULTI_SELECT', 'Multi Select'),
+        ('TEXT', 'Plain Text'),
+        ('DATE', 'Date'),
+    ]
+
+    workspace = models.ForeignKey(Workspace, on_delete=models.CASCADE, related_name='custom_fields')
+    title = models.CharField(max_length=255)
+    field_type = models.CharField(max_length=20, choices=FIELD_TYPES)
+    description = models.TextField(blank=True)
+    order = models.PositiveIntegerField(default=0)
+    
+    class Meta:
+        ordering = ['order']
+        unique_together = ['workspace', 'title']
+
+    def __str__(self):
+        return f"{self.title} ({self.get_field_type_display()})"
+
+class CustomFieldOption(models.Model):
+    field = models.ForeignKey(CustomField, on_delete=models.CASCADE, related_name='options')
+    label = models.CharField(max_length=255)
+    order = models.PositiveIntegerField(default=0)
+    color = models.CharField(max_length=7, default="#000000")
+
+    class Meta:
+        ordering = ['order']
+        unique_together = ['field', 'label']
+
+    def __str__(self):
+        return f"{self.label} ({self.field.title})"
+
+    @property
+    def available_ai_actions(self):
+        """Get list of available AI actions for this option"""
+        if self.field.field_type != 'SINGLE_SELECT':
+            return []
+            
+        # If this is for an asset field, filter by asset type
+        asset_type = None
+        if hasattr(self.field, 'asset_type'):
+            asset_type = self.field.asset_type
+            
+        return AIActionDefinition.get_supported_actions(asset_type)
+
+class CustomFieldOptionAIAction(models.Model):
+    """Links AI actions to custom field options with their configuration"""
+    
+    option = models.ForeignKey(CustomFieldOption, on_delete=models.CASCADE, related_name='ai_action_configs')
+    action = models.CharField(
+        max_length=50,
+        choices=AIActionChoices.choices
+    )
+    is_enabled = models.BooleanField(
+        default=True,
+        help_text="Whether this action is currently enabled for this option"
+    )
+    configuration = models.JSONField(
+        default=dict,
+        help_text="Configuration settings for this action"
+    )
+    
+    class Meta:
+        unique_together = ['option', 'action']
+
+    def __str__(self):
+        return f"{self.get_action_display()} for {self.option}"
+
+    def get_definition(self):
+        """Get the full definition for this action"""
+        return AIActionDefinition.get_definition(self.action)
+
+class CustomFieldValue(models.Model):
+    field = models.ForeignKey(CustomField, on_delete=models.CASCADE)
+    content_type = models.ForeignKey(ContentType, on_delete=models.CASCADE)
+    object_id = models.UUIDField()  # Since both Asset and Board use UUID
+    content_object = GenericForeignKey('content_type', 'object_id')
+    
+    # Value fields - only one will be used based on field_type
+    text_value = models.TextField(null=True, blank=True)
+    date_value = models.DateTimeField(null=True, blank=True)
+    option_value = models.ForeignKey(
+        CustomFieldOption, 
+        null=True, 
+        blank=True, 
+        on_delete=models.SET_NULL,
+        related_name='field_values'
+    )
+    multi_options = models.ManyToManyField(
+        CustomFieldOption,
+        related_name='multi_field_values',
+        blank=True
+    )
+
+    class Meta:
+        unique_together = ['field', 'content_type', 'object_id']
+
+    def __str__(self):
+        return f"{self.field.title} value for {self.content_object}"
+
+    def get_value(self):
+        """Get the appropriate value based on field type"""
+        if self.field.field_type == 'SINGLE_SELECT':
+            return self.option_value
+        elif self.field.field_type == 'MULTI_SELECT':
+            return self.multi_options.all()
+        elif self.field.field_type == 'DATE':
+            return self.date_value
+        return self.text_value
+
+class AIActionResult(models.Model):
+    """Stores results of AI action executions"""
+    
+    STATUS_CHOICES = [
+        ('PENDING', 'Pending'),
+        ('PROCESSING', 'Processing'),
+        ('COMPLETED', 'Completed'),
+        ('FAILED', 'Failed')
+    ]
+
+    field_value = models.ForeignKey(CustomFieldValue, on_delete=models.CASCADE, related_name='ai_results')
+    action = models.CharField(
+        max_length=50,
+        choices=AIActionChoices.choices
+    )
+    status = models.CharField(
+        max_length=20,
+        choices=STATUS_CHOICES,
+        default='PENDING'
+    )
+    result = models.JSONField(
+        default=dict,
+        help_text="Results of the AI analysis"
+    )
+    error_message = models.TextField(
+        null=True, 
+        blank=True,
+        help_text="Error message if the action failed"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"{self.get_action_display()} result for {self.field_value}"
+
+    def get_definition(self):
+        """Get the full definition for this action"""
+        return AIActionDefinition.get_definition(self.action)

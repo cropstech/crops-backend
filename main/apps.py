@@ -10,4 +10,4 @@ class MainConfig(AppConfig):
     def ready(self):
         from django.apps import apps
         print("Models in main app:", [m.__name__ for m in apps.get_app_config('main').get_models()])
-        from . import signals  # This will connect all the signal handlers
+        import main.signals  # Import signals when the app is ready

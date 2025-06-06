@@ -6,6 +6,7 @@ from pydantic import ConfigDict, BaseModel, Field
 from django_paddle_billing.models import Product, Subscription, Transaction
 from os.path import dirname
 from users.api import UserSchema
+from django.db import models
 
 class WorkspaceCreateSchema(Schema):
     name: str
@@ -286,3 +287,278 @@ class UploadCompleteSchema(Schema):
     upload_id: str
     key: str
     parts: List[Dict]  # List of parts with ETags
+
+class CustomFieldSchema(Schema):
+    id: int
+    title: str
+    field_type: str
+    description: Optional[str] = None
+    order: int
+    workspace_id: UUID
+    options: List['CustomFieldOptionSchema'] = []
+
+    model_config = ConfigDict(
+        from_attributes=True
+    )
+
+class CustomFieldOptionSchema(Schema):
+    id: int
+    label: str
+    order: int
+    color: str
+    field_id: int
+    ai_actions: List['CustomFieldOptionAIActionSchema'] = []
+
+    model_config = ConfigDict(
+        from_attributes=True
+    )
+
+    @staticmethod
+    def resolve_ai_actions(obj):
+        """Get AI actions from the ai_action_configs relation"""
+        return list(obj.ai_action_configs.all()) if hasattr(obj, 'ai_action_configs') else []
+
+class CustomFieldOptionAIActionSchema(Schema):
+    id: int
+    action: str
+    action_display: str
+    is_enabled: bool
+    configuration: Dict = {}
+    option_id: int
+
+    model_config = ConfigDict(
+        from_attributes=True
+    )
+
+    @staticmethod
+    def resolve_action_display(obj):
+        return obj.get_action_display()
+
+class CustomFieldValueSchema(Schema):
+    id: UUID
+    field_id: UUID
+    content_type: str
+    object_id: UUID
+    text_value: Optional[str] = None
+    date_value: Optional[datetime] = None
+    option_value: Optional[CustomFieldOptionSchema] = None
+    multi_options: List[CustomFieldOptionSchema] = []
+    value_display: str
+
+    model_config = ConfigDict(
+        from_attributes=True
+    )
+
+    @staticmethod
+    def resolve_content_type(obj):
+        return obj.content_type.model
+
+    @staticmethod
+    def resolve_value_display(obj):
+        value = obj.get_value()
+        if isinstance(value, models.QuerySet):
+            return ', '.join(str(v) for v in value)
+        return str(value) if value else ''
+
+class AIActionResultSchema(Schema):
+    id: UUID
+    action: str
+    action_display: str
+    status: str
+    result: Dict
+    error_message: Optional[str] = None
+    created_at: datetime
+    completed_at: Optional[datetime] = None
+    field_value_id: UUID
+
+    model_config = ConfigDict(
+        from_attributes=True
+    )
+
+    @staticmethod
+    def resolve_action_display(obj):
+        return obj.get_action_display()
+
+# Input schemas
+class CustomFieldCreate(Schema):
+    title: str
+    field_type: str
+    description: Optional[str] = None
+    order: Optional[int] = None
+
+class CustomFieldUpdate(Schema):
+    title: Optional[str] = None
+    description: Optional[str] = None
+    order: Optional[int] = None
+
+class CustomFieldOptionCreate(Schema):
+    label: str
+    color: str = "#000000"
+    order: Optional[int] = None
+
+class CustomFieldOptionUpdate(Schema):
+    label: Optional[str] = None
+    color: Optional[str] = None
+    order: Optional[int] = None
+
+class CustomFieldOptionAIActionCreate(Schema):
+    action: str
+    configuration: Dict = {}
+
+class CustomFieldOptionAIActionUpdate(Schema):
+    is_enabled: Optional[bool] = None
+    configuration: Optional[Dict] = None
+
+class CustomFieldValueCreate(Schema):
+    text_value: Optional[str] = None
+    date_value: Optional[datetime] = None
+    option_value_id: Optional[UUID] = None
+    multi_option_ids: List[UUID] = []
+
+# Field Configuration Schemas
+class FieldOptionAIAction(Schema):
+    """
+    Configuration for an AI action attached to a field option.
+    
+    Example:
+        {
+            "action": "spelling_grammar",
+            "is_enabled": true,
+            "configuration": {
+                "language": "en",
+                "check_spelling": true,
+                "check_grammar": true
+            }
+        }
+    """
+    action: str = Field(
+        ...,
+        description="The type of AI action. Available actions: spelling_grammar, color_contrast, image_quality, image_artifacts"
+    )
+    is_enabled: bool = Field(
+        default=True,
+        description="Whether this AI action is currently enabled"
+    )
+    configuration: Dict = Field(
+        default={},
+        description="Configuration settings specific to the AI action type. See action definitions for available settings."
+    )
+
+class FieldOption(Schema):
+    """
+    Configuration for a field option, including its AI actions.
+    
+    Example:
+        {
+            "id": 1,  # Include for existing options
+            "label": "In Progress",
+            "color": "#FFD700",
+            "order": 1,
+            "ai_actions": [
+                {
+                    "action": "spelling_grammar",
+                    "is_enabled": true,
+                    "configuration": {
+                        "language": "en",
+                        "check_spelling": true
+                    }
+                }
+            ],
+            "should_delete": false
+        }
+    """
+    id: Optional[int] = Field(
+        default=None,
+        description="ID of an existing option. Omit when creating new options."
+    )
+    label: str = Field(
+        ...,
+        description="Display text for the option"
+    )
+    color: str = Field(
+        default="#000000",
+        description="Color for the option in hex format (e.g. #FF0000)"
+    )
+    order: Optional[int] = Field(
+        default=None,
+        description="Display order of the option. Lower numbers appear first."
+    )
+    ai_actions: List[FieldOptionAIAction] = Field(
+        default=[],
+        description="List of AI actions to trigger when this option is selected. Only applicable for SINGLE_SELECT fields."
+    )
+    should_delete: bool = Field(
+        default=False,
+        description="Set to true to delete an existing option. Only applicable when updating fields."
+    )
+
+class FieldConfiguration(Schema):
+    """
+    Configuration for creating or updating a custom field.
+    
+    Examples:
+        Creating a new field:
+        {
+            "title": "Status",
+            "field_type": "SINGLE_SELECT",
+            "description": "Current status of the item",
+            "options": [
+                {
+                    "label": "In Progress",
+                    "color": "#FFD700",
+                    "order": 1,
+                    "ai_actions": [
+                        {
+                            "action": "spelling_grammar",
+                            "is_enabled": true,
+                            "configuration": {
+                                "language": "en",
+                                "check_spelling": true
+                            }
+                        }
+                    ]
+                }
+            ]
+        }
+        
+        Updating an existing field:
+        {
+            "title": "Status",
+            "field_type": "SINGLE_SELECT",
+            "description": "Current status of the item",
+            "options": [
+                {
+                    "id": 1,
+                    "label": "In Progress",
+                    "color": "#FFD700",
+                    "order": 1,
+                    "ai_actions": []
+                },
+                {
+                    "id": 2,
+                    "should_delete": true
+                },
+                {
+                    "label": "New Option",
+                    "color": "#0000FF",
+                    "order": 2
+                }
+            ]
+        }
+    """
+    title: str = Field(
+        ...,
+        description="The name of the field. Must be unique within the workspace."
+    )
+    field_type: str = Field(
+        ...,
+        description="Type of field. One of: SINGLE_SELECT, MULTI_SELECT, TEXT, DATE"
+    )
+    description: Optional[str] = Field(
+        default=None,
+        description="Optional description of the field's purpose"
+    )
+    options: List[FieldOption] = Field(
+        default=[],
+        description="List of options for SINGLE_SELECT and MULTI_SELECT fields. Ignored for other field types."
+    )

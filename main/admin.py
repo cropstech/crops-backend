@@ -1,5 +1,9 @@
 from django.contrib import admin
-from main.models import Workspace, WorkspaceMember, Asset, AssetAnalysis, Board, BoardAsset
+from main.models import (
+    Workspace, WorkspaceMember, Asset, AssetAnalysis, Board, BoardAsset,
+    CustomField, CustomFieldOption, CustomFieldValue, AIActionResult,
+    CustomFieldOptionAIAction
+)
 
 # Register your models here.
 
@@ -52,9 +56,54 @@ class BoardAssetAdmin(admin.ModelAdmin):
     search_fields = ['board__name', 'asset__name']
     ordering = ['-added_at']
 
+class CustomFieldOptionInline(admin.TabularInline):
+    model = CustomFieldOption
+    extra = 1
+
+class CustomFieldAdmin(admin.ModelAdmin):
+    list_display = ('title', 'workspace', 'field_type', 'order')
+    list_filter = ('workspace', 'field_type')
+    search_fields = ['title', 'description', 'workspace__name']
+    ordering = ['workspace', 'order']
+    inlines = [CustomFieldOptionInline]
+
+class CustomFieldOptionAIActionInline(admin.TabularInline):
+    model = CustomFieldOptionAIAction
+    extra = 1
+
+class CustomFieldOptionAdmin(admin.ModelAdmin):
+    list_display = ('label', 'field', 'order')
+    list_filter = ('field__workspace', 'field')
+    search_fields = ['label', 'field__title']
+    ordering = ['field', 'order']
+    inlines = [CustomFieldOptionAIActionInline]
+
+class CustomFieldValueAdmin(admin.ModelAdmin):
+    list_display = ('field', 'content_type', 'get_value_display')
+    list_filter = ('field__workspace', 'field', 'content_type')
+    search_fields = ['field__title']
+    
+    def get_value_display(self, obj):
+        value = obj.get_value()
+        if isinstance(value, models.QuerySet):
+            return ', '.join(str(v) for v in value)
+        return str(value) if value else '-'
+    get_value_display.short_description = 'Value'
+
+class AIActionResultAdmin(admin.ModelAdmin):
+    list_display = ('action', 'field_value', 'status', 'created_at', 'completed_at')
+    list_filter = ('action', 'status')
+    search_fields = ['field_value__field__title']
+    ordering = ['-created_at']
+    readonly_fields = ('created_at', 'completed_at')
+
 admin.site.register(Workspace, WorkspaceAdmin)
 admin.site.register(WorkspaceMember, WorkspaceMemberAdmin)
 admin.site.register(Asset, AssetAdmin)
 admin.site.register(AssetAnalysis, AssetAnalysisAdmin)
 admin.site.register(Board, BoardAdmin)
 admin.site.register(BoardAsset, BoardAssetAdmin)
+admin.site.register(CustomField, CustomFieldAdmin)
+admin.site.register(CustomFieldOption, CustomFieldOptionAdmin)
+admin.site.register(CustomFieldValue, CustomFieldValueAdmin)
+admin.site.register(AIActionResult, AIActionResultAdmin)

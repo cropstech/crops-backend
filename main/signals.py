@@ -10,10 +10,12 @@ from django_paddle_billing.signals import (
     subscription_trialing,
     subscription_updated
 )
-from .models import Workspace
+from .models import Workspace, CustomFieldValue
 from django_paddle_billing.models import Subscription
 import logging
 import time
+from django.db.models.signals import post_save
+from .services.ai_actions import trigger_ai_actions
 
 logger = logging.getLogger(__name__)
 
@@ -115,4 +117,13 @@ def handle_subscription_created(sender, payload, occurred_at, **kwargs):
 #         pass
 
 # Make sure signals are loaded
-default_app_config = 'main.apps.MainConfig' 
+default_app_config = 'main.apps.MainConfig'
+
+@receiver(post_save, sender=CustomFieldValue)
+def handle_field_value_change(sender, instance, created, **kwargs):
+    """
+    When a field value is created or updated, trigger any associated AI actions
+    if it's a single-select field with an option that has AI actions enabled.
+    """
+    if instance.field.field_type == 'SINGLE_SELECT' and instance.option_value:
+        trigger_ai_actions(instance) 

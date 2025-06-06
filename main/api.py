@@ -2,7 +2,7 @@ from ninja import Router, Schema, File, Form, UploadedFile
 from ninja.decorators import decorate_view
 from datetime import datetime, timedelta
 from uuid import UUID
-from typing import Optional, List, Any
+from typing import Optional, List, Any, Dict
 from django.shortcuts import get_object_or_404
 from django.contrib.contenttypes.models import ContentType
 from django.utils import timezone
@@ -20,7 +20,7 @@ from botocore.exceptions import ClientError
 import uuid
 from django.core.exceptions import PermissionDenied, ValidationError
 from apiclient import HeaderAuthentication
-from .models import Workspace, WorkspaceInvitation, ShareLink, WorkspaceMember, Asset, Board, BoardAsset
+from .models import Workspace, WorkspaceInvitation, ShareLink, WorkspaceMember, Asset, Board, BoardAsset, CustomField, CustomFieldOption, CustomFieldValue, AIActionDefinition, AIActionChoices, AIActionResult, CustomFieldOptionAIAction
 from .schemas import (
     WorkspaceInviteSchema, ShareLinkSchema, WorkspaceCreateSchema, 
     WorkspaceDataSchema, WorkspaceUpdateSchema, 
@@ -44,7 +44,21 @@ from .schemas import (
     BulkDownloadResponseSchema,
     BoardReorderSchema,
     UploadCompleteSchema,
-    UploadResponseSchema
+    UploadResponseSchema,
+    CustomFieldSchema,
+    CustomFieldCreate,
+    CustomFieldUpdate,
+    CustomFieldOptionSchema,
+    CustomFieldOptionCreate,
+    CustomFieldOptionUpdate,
+    CustomFieldValueSchema,
+    CustomFieldValueCreate,
+    AIActionResultSchema,
+    CustomFieldOptionAIActionSchema,
+    CustomFieldOptionAIActionCreate,
+    CustomFieldOptionAIActionUpdate,
+    FieldConfiguration,
+    FieldOption
 )
 from .utils import (
     send_invitation_email, process_file_metadata, process_file_metadata_background, 
@@ -58,6 +72,7 @@ import os
 import zipfile
 import tempfile
 from .upload import UploadManager
+from django.db import models
 
 router = Router(tags=["main"], auth=django_auth)
 
@@ -1141,5 +1156,330 @@ def reorder_boards(request, workspace_id: UUID, data: List[BoardReorderSchema]):
             board = get_object_or_404(Board, workspace=workspace, id=item.board_id)
             board.order = item.new_order
             board.save()
+    
+    return {"success": True}
+
+@router.get("/workspaces/{uuid:workspace_id}/fields", response=List[CustomFieldSchema])
+@decorate_view(check_workspace_permission(WorkspaceMember.Role.COMMENTER))
+def list_custom_fields(request, workspace_id: UUID):
+    """List all custom fields in a workspace"""
+    workspace = get_object_or_404(Workspace, id=workspace_id)
+    return CustomField.objects.filter(workspace=workspace).prefetch_related(
+        'options',
+        'options__ai_action_configs'
+    ).select_related('workspace')
+
+def _process_field_options(field: CustomField, options_data: List[FieldOption]):
+    """Helper function to process field options and AI actions"""
+    existing_option_ids = set(field.options.values_list('id', flat=True))
+    processed_option_ids = set()
+
+    for option_data in options_data:
+        if option_data.should_delete and option_data.id:
+            # Delete existing option
+            field.options.filter(id=option_data.id).delete()
+            continue
+
+        if option_data.id:
+            try:
+                # Update existing option
+                option = field.options.get(id=option_data.id)
+                option.label = option_data.label
+                option.color = option_data.color
+                option.order = option_data.order or 0
+                option.save()
+                processed_option_ids.add(option.id)
+            except CustomFieldOption.DoesNotExist:
+                # If option doesn't exist, create a new one instead
+                option = CustomFieldOption.objects.create(
+                    field=field,
+                    label=option_data.label,
+                    color=option_data.color,
+                    order=option_data.order or 0
+                )
+                processed_option_ids.add(option.id)
+        else:
+            # Create new option
+            option = CustomFieldOption.objects.create(
+                field=field,
+                label=option_data.label,
+                color=option_data.color,
+                order=option_data.order or 0
+            )
+            processed_option_ids.add(option.id)
+
+        # Process AI actions for this option
+        if field.field_type == 'SINGLE_SELECT':
+            for action_data in option_data.ai_actions:
+                action_config, created = CustomFieldOptionAIAction.objects.update_or_create(
+                    option=option,
+                    action=action_data.action,
+                    defaults={
+                        'is_enabled': action_data.is_enabled,
+                        'configuration': action_data.configuration
+                    }
+                )
+
+            # Remove any AI actions that weren't in the update
+            option.ai_action_configs.exclude(
+                action__in=[a.action for a in option_data.ai_actions]
+            ).delete()
+
+    # Delete options that weren't processed (i.e., removed from the frontend)
+    to_delete = existing_option_ids - processed_option_ids
+    if to_delete:
+        field.options.filter(id__in=to_delete).delete()
+
+@router.post("/workspaces/{uuid:workspace_id}/fields", response=CustomFieldSchema)
+@decorate_view(check_workspace_permission(WorkspaceMember.Role.ADMIN))
+def create_field(request, workspace_id: UUID, data: FieldConfiguration):
+    """
+    Create a new custom field in a workspace.
+    
+    This endpoint creates a new field with its options and AI actions. For SINGLE_SELECT
+    and MULTI_SELECT fields, you can define options with colors and ordering. For
+    SINGLE_SELECT fields, options can also have AI actions that trigger when the option
+    is selected.
+    
+    Available field types:
+    - SINGLE_SELECT: Single choice from predefined options
+    - MULTI_SELECT: Multiple choices from predefined options
+    - TEXT: Plain text input
+    - DATE: Date/time input
+    
+    Available AI actions for SINGLE_SELECT options:
+    - spelling_grammar: Checks spelling and grammar in text
+      Config: {"language": "en|es|fr", "check_spelling": bool, "check_grammar": bool}
+    - color_contrast: Analyzes color contrast for accessibility
+      Config: {"wcag_level": "AA|AAA"}
+    - image_quality: Checks image resolution and quality
+      Config: {"min_resolution": int, "check_compression": bool}
+    - image_artifacts: Detects image artifacts and blurriness
+      Config: {"sensitivity": "low|medium|high"}
+    
+    Permissions:
+    - Requires ADMIN role in the workspace
+    
+    Returns:
+    - The created field with its options and AI actions
+    """
+    workspace = get_object_or_404(Workspace, id=workspace_id)
+    
+    with transaction.atomic():
+        # Check for existing field with same title
+        if CustomField.objects.filter(workspace=workspace, title=data.title).exists():
+            raise HttpError(400, f"A field with title '{data.title}' already exists")
+            
+        # Create the field
+        field = CustomField.objects.create(
+            workspace=workspace,
+            title=data.title,
+            field_type=data.field_type,
+            description=data.description
+        )
+
+        # Process options and AI actions
+        _process_field_options(field, data.options)
+        
+        return field
+
+@router.put("/workspaces/{uuid:workspace_id}/fields/{int:field_id}", response=CustomFieldSchema)
+@decorate_view(check_workspace_permission(WorkspaceMember.Role.ADMIN))
+def update_field(request, workspace_id: UUID, field_id: int, data: FieldConfiguration):
+    """
+    Update an existing custom field.
+    
+    This endpoint updates a field's properties, options, and AI actions. You can:
+    - Change the field's title and description
+    - Update existing options (requires option ID)
+    - Add new options (omit option ID)
+    - Delete options (set should_delete=true)
+    - Update AI actions for options
+    
+    When updating options:
+    - Include 'id' to update an existing option
+    - Omit 'id' to create a new option
+    - Set 'should_delete: true' to remove an option
+    - Options not included in the request remain unchanged
+    - If an option ID doesn't exist, a new option will be created
+    
+    When updating AI actions:
+    - All AI actions for an option must be included
+    - AI actions not included will be removed
+    - Only applicable for SINGLE_SELECT fields
+    
+    Permissions:
+    - Requires ADMIN role in the workspace
+    
+    Returns:
+    - The updated field with its options and AI actions
+    """
+    workspace = get_object_or_404(Workspace, id=workspace_id)
+    field = get_object_or_404(CustomField, workspace=workspace, id=field_id)
+    
+    with transaction.atomic():
+        # Check for title uniqueness only if title changed
+        if field.title != data.title and CustomField.objects.filter(
+            workspace=workspace, 
+            title=data.title
+        ).exists():
+            raise HttpError(400, f"A field with title '{data.title}' already exists")
+        
+        # Update the field
+        field.title = data.title
+        field.field_type = data.field_type
+        field.description = data.description
+        field.save()
+
+        # Process options and AI actions
+        _process_field_options(field, data.options)
+        
+        return field
+
+@router.get("/workspaces/{uuid:workspace_id}/assets/{uuid:asset_id}/field-values", response=List[CustomFieldValueSchema])
+@decorate_view(check_workspace_permission(WorkspaceMember.Role.COMMENTER))
+def get_asset_field_values(request, workspace_id: UUID, asset_id: UUID):
+    """Get all custom field values for an asset"""
+    workspace = get_object_or_404(Workspace, id=workspace_id)
+    asset = get_object_or_404(Asset, workspace=workspace, id=asset_id)
+    content_type = ContentType.objects.get_for_model(Asset)
+    
+    return CustomFieldValue.objects.filter(
+        content_type=content_type,
+        object_id=asset.id
+    ).select_related(
+        'field',
+        'option_value'
+    ).prefetch_related('multi_options')
+
+@router.get("/workspaces/{uuid:workspace_id}/boards/{uuid:board_id}/field-values", response=List[CustomFieldValueSchema])
+@decorate_view(check_workspace_permission(WorkspaceMember.Role.COMMENTER))
+def get_board_field_values(request, workspace_id: UUID, board_id: UUID):
+    """Get all custom field values for a board"""
+    workspace = get_object_or_404(Workspace, id=workspace_id)
+    board = get_object_or_404(Board, workspace=workspace, id=board_id)
+    content_type = ContentType.objects.get_for_model(Board)
+    
+    return CustomFieldValue.objects.filter(
+        content_type=content_type,
+        object_id=board.id
+    ).select_related(
+        'field',
+        'option_value'
+    ).prefetch_related('multi_options')
+
+@router.post("/workspaces/{uuid:workspace_id}/custom-fields/{int:field_id}/values", response=CustomFieldValueSchema)
+@decorate_view(check_workspace_permission(WorkspaceMember.Role.EDITOR))
+def set_field_value(
+    request,
+    workspace_id: UUID,
+    field_id: int,
+    content_type: str,
+    object_id: UUID,
+    data: CustomFieldValueCreate
+):
+    """Set a custom field value for an asset or board"""
+    workspace = get_object_or_404(Workspace, id=workspace_id)
+    field = get_object_or_404(CustomField, workspace=workspace, id=field_id)
+    
+    # Validate content type
+    if content_type not in ['asset', 'board']:
+        raise HTTPException(400, "Invalid content type")
+    
+    # Get the content type and object
+    model = Asset if content_type == 'asset' else Board
+    content_type_obj = ContentType.objects.get_for_model(model)
+    content_object = get_object_or_404(model, workspace=workspace, id=object_id)
+    
+    # Get or create the field value
+    field_value, created = CustomFieldValue.objects.get_or_create(
+        field=field,
+        content_type=content_type_obj,
+        object_id=object_id
+    )
+    
+    # Update the value based on field type
+    if field.field_type == 'TEXT':
+        field_value.text_value = data.text_value
+    elif field.field_type == 'DATE':
+        field_value.date_value = data.date_value
+    elif field.field_type == 'SINGLE_SELECT':
+        if data.option_value_id:
+            option = get_object_or_404(CustomFieldOption, field=field, id=data.option_value_id)
+            field_value.option_value = option
+    elif field.field_type == 'MULTI_SELECT':
+        if data.multi_option_ids:
+            options = CustomFieldOption.objects.filter(
+                field=field,
+                id__in=data.multi_option_ids
+            )
+            field_value.multi_options.set(options)
+    
+    field_value.save()
+    return field_value
+
+@router.get("/workspaces/{uuid:workspace_id}/ai-actions/available", response=List[Dict])
+@decorate_view(check_workspace_permission(WorkspaceMember.Role.COMMENTER))
+def get_available_ai_actions(request, workspace_id: UUID):
+    """Get list of available AI actions and their configurations"""
+    return [
+        {
+            'id': action,
+            'name': name,
+            'definition': AIActionDefinition.get_definition(action)
+        }
+        for action, name in AIActionChoices.choices
+    ]
+
+@router.get("/workspaces/{uuid:workspace_id}/ai-actions/results", response=List[AIActionResultSchema])
+@decorate_view(check_workspace_permission(WorkspaceMember.Role.COMMENTER))
+def get_ai_action_results(
+    request,
+    workspace_id: UUID,
+    content_type: str,
+    object_id: UUID
+):
+    """Get all AI action results for an asset or board"""
+    workspace = get_object_or_404(Workspace, id=workspace_id)
+    
+    # Validate content type
+    if content_type not in ['asset', 'board']:
+        raise HTTPException(400, "Invalid content type")
+    
+    # Get the content type and object
+    model = Asset if content_type == 'asset' else Board
+    content_type_obj = ContentType.objects.get_for_model(model)
+    content_object = get_object_or_404(model, workspace=workspace, id=object_id)
+    
+    # Get all field values and their AI results
+    return AIActionResult.objects.filter(
+        field_value__content_type=content_type_obj,
+        field_value__object_id=object_id
+    ).select_related('field_value').order_by('-created_at')
+
+@router.delete("/workspaces/{uuid:workspace_id}/fields/{int:field_id}")
+@decorate_view(check_workspace_permission(WorkspaceMember.Role.ADMIN))
+def delete_field(request, workspace_id: UUID, field_id: int):
+    """
+    Delete a custom field and all its related data.
+    
+    This endpoint will:
+    - Delete all field values associated with this field
+    - Delete all field options and their AI actions
+    - Delete the field itself
+    
+    Permissions:
+    - Requires ADMIN role in the workspace
+    
+    Returns:
+    - Success confirmation
+    """
+    workspace = get_object_or_404(Workspace, id=workspace_id)
+    field = get_object_or_404(CustomField, workspace=workspace, id=field_id)
+    
+    with transaction.atomic():
+        # The field's options and values will be deleted automatically
+        # due to CASCADE delete settings in the models
+        field.delete()
     
     return {"success": True}
