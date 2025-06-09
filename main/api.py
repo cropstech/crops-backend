@@ -97,19 +97,106 @@ def create_workspace(request, data: WorkspaceCreateSchema):
             avatar=data.avatar
         )
     
-    WorkspaceMember.objects.create(
-        workspace=workspace,
-        user=request.user,
-        role=WorkspaceMember.Role.ADMIN
-    )
-    
-    # Create default board
-    Board.objects.create(
-        workspace=workspace,
-        name="General",
-        description="Default board for general content",
-        created_by=request.user
-    )
+    with transaction.atomic():
+        # Create workspace member
+        WorkspaceMember.objects.create(
+            workspace=workspace,
+            user=request.user,
+            role=WorkspaceMember.Role.ADMIN
+        )
+        
+        # Create default board
+        Board.objects.create(
+            workspace=workspace,
+            name="General",
+            description="Default board for general content",
+            created_by=request.user
+        )
+        
+        # Create default status field
+        status_field = CustomField.objects.create(
+            workspace=workspace,
+            title="Status",
+            field_type="SINGLE_SELECT",
+            description="Use status tracking to maintain perfect team alignment throughout your workflow."
+        )
+        
+        # Create status options with their AI actions
+        status_options = [
+            {
+                "label": "In Progress",
+                "color": "#7B1FA2",
+                "order": 1,
+                "ai_actions": []
+            },
+            {
+                "label": "Ready for Review",
+                "color": "#00796B",
+                "order": 2,
+                "ai_actions": []
+            },
+            {
+                "label": "AI Check",
+                "color": "#E64A19",
+                "order": 3,
+                "ai_actions": [
+                    {
+                        "action": "spelling_grammar",
+                        "is_enabled": True,
+                        "configuration": {
+                            "language": "en",
+                            "check_spelling": True,
+                            "check_grammar": True
+                        }
+                    },
+                    {
+                        "action": "color_contrast",
+                        "is_enabled": True,
+                        "configuration": {
+                            "wcag_level": "AA"
+                        }
+                    },
+                    {
+                        "action": "image_quality",
+                        "is_enabled": True,
+                        "configuration": {
+                            "min_resolution": 1920,
+                            "check_compression": True
+                        }
+                    },
+                    {
+                        "action": "image_artifacts",
+                        "is_enabled": True,
+                        "configuration": {
+                            "sensitivity": "medium"
+                        }
+                    }
+                ]
+            },
+            {
+                "label": "Done",
+                "color": "#00a300",
+                "order": 4,
+                "ai_actions": []
+            }
+        ]
+        
+        for option_data in status_options:
+            option = CustomFieldOption.objects.create(
+                field=status_field,
+                label=option_data["label"],
+                color=option_data["color"],
+                order=option_data["order"]
+            )
+            
+            # Create AI actions for the option
+            for action_data in option_data["ai_actions"]:
+                CustomFieldOptionAIAction.objects.create(
+                    option=option,
+                    action=action_data["action"],
+                    is_enabled=action_data["is_enabled"],
+                    configuration=action_data["configuration"]
+                )
     
     return workspace
 
