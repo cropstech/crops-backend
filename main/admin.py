@@ -1,4 +1,5 @@
 from django.contrib import admin
+from django.db import models
 from main.models import (
     Workspace, WorkspaceMember, Asset, AssetAnalysis, Board, BoardAsset,
     CustomField, CustomFieldOption, CustomFieldValue, AIActionResult,

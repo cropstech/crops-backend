@@ -259,6 +259,14 @@ class AssetSchema(Schema):
             # Get the full path and remove the filename
             return dirname(obj.file.name)
         return None
+    
+    @staticmethod
+    def resolve_custom_fields(obj):
+        return obj.custom_fields.all()
+    
+    @staticmethod
+    def resolve_custom_field_values(obj):
+        return obj.custom_field_values.all()
 
 class BoardReorderSchema(Schema):
     board_id: UUID
@@ -335,8 +343,8 @@ class CustomFieldOptionAIActionSchema(Schema):
         return obj.get_action_display()
 
 class CustomFieldValueSchema(Schema):
-    id: UUID
-    field_id: UUID
+    id: int
+    field_id: int
     content_type: str
     object_id: UUID
     text_value: Optional[str] = None
@@ -361,7 +369,7 @@ class CustomFieldValueSchema(Schema):
         return str(value) if value else ''
 
 class AIActionResultSchema(Schema):
-    id: UUID
+    id: int
     action: str
     action_display: str
     status: str
@@ -369,7 +377,7 @@ class AIActionResultSchema(Schema):
     error_message: Optional[str] = None
     created_at: datetime
     completed_at: Optional[datetime] = None
-    field_value_id: UUID
+    field_value_id: int
 
     model_config = ConfigDict(
         from_attributes=True
@@ -410,10 +418,12 @@ class CustomFieldOptionAIActionUpdate(Schema):
     configuration: Optional[Dict] = None
 
 class CustomFieldValueCreate(Schema):
+    content_type: str
+    object_id: UUID
     text_value: Optional[str] = None
     date_value: Optional[datetime] = None
-    option_value_id: Optional[UUID] = None
-    multi_option_ids: List[UUID] = []
+    option_value_id: Optional[int] = None
+    multi_option_ids: List[int] = []
 
 # Field Configuration Schemas
 class FieldOptionAIAction(Schema):

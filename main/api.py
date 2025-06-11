@@ -1277,22 +1277,36 @@ def _process_field_options(field: CustomField, options_data: List[FieldOption]):
                 option.save()
                 processed_option_ids.add(option.id)
             except CustomFieldOption.DoesNotExist:
-                # If option doesn't exist, create a new one instead
-                option = CustomFieldOption.objects.create(
+                # If option doesn't exist, get or create one with this label
+                option, created = CustomFieldOption.objects.get_or_create(
                     field=field,
                     label=option_data.label,
-                    color=option_data.color,
-                    order=option_data.order or 0
+                    defaults={
+                        'color': option_data.color,
+                        'order': option_data.order or 0
+                    }
                 )
+                if not created:
+                    # Option already existed, update its properties
+                    option.color = option_data.color
+                    option.order = option_data.order or 0
+                    option.save()
                 processed_option_ids.add(option.id)
         else:
-            # Create new option
-            option = CustomFieldOption.objects.create(
+            # Create new option, or get existing one with same label
+            option, created = CustomFieldOption.objects.get_or_create(
                 field=field,
                 label=option_data.label,
-                color=option_data.color,
-                order=option_data.order or 0
+                defaults={
+                    'color': option_data.color,
+                    'order': option_data.order or 0
+                }
             )
+            if not created:
+                # Option already existed, update its properties
+                option.color = option_data.color
+                option.order = option_data.order or 0
+                option.save()
             processed_option_ids.add(option.id)
 
         # Process AI actions for this option
@@ -1461,8 +1475,6 @@ def set_field_value(
     request,
     workspace_id: UUID,
     field_id: int,
-    content_type: str,
-    object_id: UUID,
     data: CustomFieldValueCreate
 ):
     """Set a custom field value for an asset or board"""
@@ -1470,19 +1482,19 @@ def set_field_value(
     field = get_object_or_404(CustomField, workspace=workspace, id=field_id)
     
     # Validate content type
-    if content_type not in ['asset', 'board']:
+    if data.content_type not in ['asset', 'board']:
         raise HTTPException(400, "Invalid content type")
     
     # Get the content type and object
-    model = Asset if content_type == 'asset' else Board
+    model = Asset if data.content_type == 'asset' else Board
     content_type_obj = ContentType.objects.get_for_model(model)
-    content_object = get_object_or_404(model, workspace=workspace, id=object_id)
+    content_object = get_object_or_404(model, workspace=workspace, id=data.object_id)
     
     # Get or create the field value
     field_value, created = CustomFieldValue.objects.get_or_create(
         field=field,
         content_type=content_type_obj,
-        object_id=object_id
+        object_id=data.object_id
     )
     
     # Update the value based on field type

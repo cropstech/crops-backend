@@ -20,7 +20,7 @@ def trigger_ai_actions(field_value: CustomFieldValue) -> List[AIActionResult]:
     # Get all enabled AI actions for this option
     enabled_actions = field_value.option_value.ai_action_configs.filter(
         is_enabled=True
-    ).select_related('action')
+    )
 
     results = []
     for action_config in enabled_actions:
