@@ -570,5 +570,135 @@ class FieldConfiguration(Schema):
     )
     options: List[FieldOption] = Field(
         default=[],
-        description="List of options for SINGLE_SELECT and MULTI_SELECT fields. Ignored for other field types."
-    )
+              description="List of options for SINGLE_SELECT and MULTI_SELECT fields. Ignored for other field types."
+  )
+
+
+# Notification System Schemas
+
+class BoardFollowerSchema(Schema):
+    id: int
+    board_id: UUID
+    board_name: str
+    include_sub_boards: bool
+    created_at: datetime
+    
+    @staticmethod
+    def from_orm(obj):
+        return {
+            'id': obj.id,
+            'board_id': obj.board.id,
+            'board_name': obj.board.name,
+            'include_sub_boards': obj.include_sub_boards,
+            'created_at': obj.created_at
+        }
+
+
+class BoardFollowerCreate(Schema):
+    board_id: UUID
+    include_sub_boards: bool = True
+
+
+class CommentAuthorSchema(Schema):
+    id: int
+    email: str
+    first_name: str
+    last_name: str
+
+
+class CommentSchema(Schema):
+    id: int
+    author: CommentAuthorSchema
+    text: str
+    created_at: datetime
+    updated_at: datetime
+    parent_id: Optional[int] = None
+    is_reply: bool
+    has_replies: bool
+    reply_count: int
+    mentioned_users: List[str] = []  # List of mentioned user emails
+    
+    @staticmethod
+    def from_orm(obj):
+        return {
+            'id': obj.id,
+            'author': {
+                'id': obj.author.id,
+                'email': obj.author.email,
+                'first_name': obj.author.first_name,
+                'last_name': obj.author.last_name
+            },
+            'text': obj.text,
+            'created_at': obj.created_at,
+            'updated_at': obj.updated_at,
+            'parent_id': obj.parent.id if obj.parent else None,
+            'is_reply': obj.is_reply,
+            'has_replies': obj.replies.exists() if hasattr(obj, 'replies') else False,
+            'reply_count': obj.replies.count() if hasattr(obj, 'replies') else 0,
+            'mentioned_users': [user.email for user in obj.mentioned_users.all()]
+        }
+
+
+class CommentCreate(Schema):
+    text: str
+    content_type: str  # 'asset' or 'board'
+    object_id: UUID
+    parent_id: Optional[int] = None
+
+
+class CommentUpdate(Schema):
+    text: str
+
+
+class NotificationPreferenceSchema(Schema):
+    id: int
+    event_type: str
+    event_type_display: str
+    in_app_enabled: bool
+    email_enabled: bool
+    email_frequency: int
+    
+    @staticmethod
+    def from_orm(obj):
+        return {
+            'id': obj.id,
+            'event_type': obj.event_type,
+            'event_type_display': obj.get_event_type_display(),
+            'in_app_enabled': obj.in_app_enabled,
+            'email_enabled': obj.email_enabled,
+            'email_frequency': obj.email_frequency
+        }
+
+
+class NotificationPreferenceUpdate(Schema):
+    in_app_enabled: bool
+    email_enabled: bool
+    email_frequency: int = 5
+
+
+class NotificationPreferencesBulkUpdate(Schema):
+    preferences: Dict[str, NotificationPreferenceUpdate]  # event_type -> preference
+
+
+class NotificationSchema(Schema):
+    id: int
+    actor_email: Optional[str] = None
+    verb: str
+    description: str
+    target_name: Optional[str] = None
+    unread: bool
+    timestamp: datetime
+    data: Dict = {}
+    
+    @staticmethod
+    def from_orm(obj):
+        return {
+            'id': obj.id,
+            'actor_email': obj.actor.email if obj.actor else None,
+            'verb': obj.verb,
+            'description': obj.description,
+            'target_name': str(obj.target) if obj.target else None,
+            'unread': obj.unread,
+            'timestamp': obj.timestamp,
+            'data': obj.data or {}
+        }

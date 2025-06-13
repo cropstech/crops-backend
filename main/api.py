@@ -20,7 +20,25 @@ from botocore.exceptions import ClientError
 import uuid
 from django.core.exceptions import PermissionDenied, ValidationError
 from apiclient import HeaderAuthentication
-from .models import Workspace, WorkspaceInvitation, ShareLink, WorkspaceMember, Asset, Board, BoardAsset, CustomField, CustomFieldOption, CustomFieldValue, AIActionDefinition, AIActionChoices, AIActionResult, CustomFieldOptionAIAction
+from .models import (
+    AIActionChoices,
+    AIActionDefinition,
+    AIActionResult,
+    Asset,
+    Board,
+    BoardAsset,
+    BoardFollower,
+    Comment,
+    CustomField,
+    CustomFieldOption,
+    CustomFieldOptionAIAction,
+    CustomFieldValue,
+    NotificationPreference,
+    ShareLink,
+    Workspace,
+    WorkspaceInvitation,
+    WorkspaceMember
+)
 from .schemas import (
     WorkspaceInviteSchema, ShareLinkSchema, WorkspaceCreateSchema, 
     WorkspaceDataSchema, WorkspaceUpdateSchema, 
@@ -58,7 +76,16 @@ from .schemas import (
     CustomFieldOptionAIActionCreate,
     CustomFieldOptionAIActionUpdate,
     FieldConfiguration,
-    FieldOption
+    FieldOption,
+    BoardFollowerSchema,
+    BoardFollowerCreate,
+    CommentSchema,
+    CommentCreate,
+    CommentUpdate,
+    NotificationPreferenceSchema,
+    NotificationPreferenceUpdate,
+    NotificationPreferencesBulkUpdate,
+    NotificationSchema
 )
 from .utils import (
     send_invitation_email, process_file_metadata, process_file_metadata_background, 
@@ -1581,4 +1608,317 @@ def delete_field(request, workspace_id: UUID, field_id: int):
         # due to CASCADE delete settings in the models
         field.delete()
     
-    return {"success": True}
+    return {"message": "Field deleted successfully"}
+
+
+# Notification System Endpoints
+
+# Board Following Endpoints
+@router.post("/workspaces/{uuid:workspace_id}/boards/{uuid:board_id}/follow", response=BoardFollowerSchema)
+@decorate_view(check_workspace_permission(WorkspaceMember.Role.COMMENTER))
+def follow_board(request, workspace_id: UUID, board_id: UUID, data: BoardFollowerCreate):
+    """Follow a board for notifications"""
+    workspace = get_object_or_404(Workspace, id=workspace_id)
+    board = get_object_or_404(Board, workspace=workspace, id=data.board_id)
+    
+    from main.services.notifications import NotificationService
+    follower = NotificationService.follow_board(
+        user=request.user,
+        board=board,
+        include_sub_boards=data.include_sub_boards
+    )
+    
+    return BoardFollowerSchema.from_orm(follower)
+
+
+@router.delete("/workspaces/{uuid:workspace_id}/boards/{uuid:board_id}/follow")
+@decorate_view(check_workspace_permission(WorkspaceMember.Role.COMMENTER))
+def unfollow_board(request, workspace_id: UUID, board_id: UUID):
+    """Unfollow a board"""
+    workspace = get_object_or_404(Workspace, id=workspace_id)
+    board = get_object_or_404(Board, workspace=workspace, id=board_id)
+    
+    from main.services.notifications import NotificationService
+    NotificationService.unfollow_board(user=request.user, board=board)
+    
+    return {"message": "Board unfollowed successfully"}
+
+
+@router.get("/workspaces/{uuid:workspace_id}/followed-boards", response=List[BoardFollowerSchema])
+@decorate_view(check_workspace_permission(WorkspaceMember.Role.COMMENTER))
+def get_followed_boards(request, workspace_id: UUID):
+    """Get all boards the user is following in this workspace"""
+    workspace = get_object_or_404(Workspace, id=workspace_id)
+    
+    from main.services.notifications import NotificationService
+    followed_boards = NotificationService.get_followed_boards(request.user).filter(
+        board__workspace=workspace
+    )
+    
+    return [BoardFollowerSchema.from_orm(fb) for fb in followed_boards]
+
+
+@router.get("/workspaces/{uuid:workspace_id}/boards/{uuid:board_id}/followers", response=List[dict])
+@decorate_view(check_workspace_permission(WorkspaceMember.Role.COMMENTER))
+def get_board_followers(request, workspace_id: UUID, board_id: UUID):
+    """Get all followers of a board"""
+    workspace = get_object_or_404(Workspace, id=workspace_id)
+    board = get_object_or_404(Board, workspace=workspace, id=board_id)
+    
+    from main.services.notifications import NotificationService
+    followers = NotificationService.get_board_followers(board)
+    
+    return [
+        {
+            'user_email': follower.user.email,
+            'include_sub_boards': follower.include_sub_boards,
+            'created_at': follower.created_at
+        }
+        for follower in followers
+    ]
+
+
+# Comment Endpoints
+@router.post("/workspaces/{uuid:workspace_id}/comments", response=CommentSchema)
+@decorate_view(check_workspace_permission(WorkspaceMember.Role.COMMENTER))
+def create_comment(request, workspace_id: UUID, data: CommentCreate):
+    """Create a comment on an asset or board"""
+    workspace = get_object_or_404(Workspace, id=workspace_id)
+    
+    # Validate content type and get object
+    if data.content_type not in ['asset', 'board']:
+        raise HttpError(400, "Invalid content type")
+        
+    model = Asset if data.content_type == 'asset' else Board
+    content_type_obj = ContentType.objects.get_for_model(model)
+    content_object = get_object_or_404(model, workspace=workspace, id=data.object_id)
+    
+    # Get parent comment if specified
+    parent = None
+    if data.parent_id:
+        parent = get_object_or_404(Comment, id=data.parent_id)
+    
+    # Create comment
+    comment = Comment.objects.create(
+        content_type=content_type_obj,
+        object_id=data.object_id,
+        author=request.user,
+        text=data.text,
+        parent=parent
+    )
+    
+    # Extract and process mentions
+    from main.services.notifications import NotificationService
+    mentions = NotificationService.extract_mentions(data.text)
+    mentioned_users = NotificationService.get_users_from_mentions(mentions)
+    
+    if mentioned_users:
+        comment.mentioned_users.set(mentioned_users)
+    
+    # Trigger notifications
+    if data.content_type == 'asset':
+        NotificationService.notify_comment_on_asset(comment, content_object)
+    
+    if mentioned_users:
+        NotificationService.notify_mentions(comment, mentioned_users)
+    
+    if parent:
+        NotificationService.notify_thread_reply(comment)
+    
+    return CommentSchema.from_orm(comment)
+
+
+@router.get("/workspaces/{uuid:workspace_id}/comments", response=List[CommentSchema])
+@decorate_view(check_workspace_permission(WorkspaceMember.Role.COMMENTER))
+def get_comments(
+    request, 
+    workspace_id: UUID, 
+    content_type: str, 
+    object_id: UUID
+):
+    """Get all comments for an asset or board (including replies)"""
+    workspace = get_object_or_404(Workspace, id=workspace_id)
+    
+    # Validate content type and object
+    if content_type not in ['asset', 'board']:
+        raise HttpError(400, "Invalid content type")
+        
+    model = Asset if content_type == 'asset' else Board
+    content_type_obj = ContentType.objects.get_for_model(model)
+    content_object = get_object_or_404(model, workspace=workspace, id=object_id)
+    
+    # Get all comments for this object (both top-level and replies)
+    comments = Comment.objects.filter(
+        content_type=content_type_obj,
+        object_id=object_id
+    ).select_related('author', 'parent').prefetch_related('mentioned_users', 'replies').order_by('created_at')
+    
+    return [CommentSchema.from_orm(comment) for comment in comments]
+
+
+@router.put("/workspaces/{uuid:workspace_id}/comments/{int:comment_id}", response=CommentSchema)
+@decorate_view(check_workspace_permission(WorkspaceMember.Role.COMMENTER))
+def update_comment(request, workspace_id: UUID, comment_id: int, data: CommentUpdate):
+    """Update a comment (only by the author)"""
+    workspace = get_object_or_404(Workspace, id=workspace_id)
+    comment = get_object_or_404(Comment, id=comment_id)
+    
+    # Check if user is the author
+    if comment.author != request.user:
+        raise HttpError(403, "You can only edit your own comments")
+    
+    # Check if the content object belongs to this workspace
+    if hasattr(comment.content_object, 'workspace'):
+        if comment.content_object.workspace != workspace:
+            raise HttpError(404, "Comment not found")
+    
+    # Update comment
+    comment.text = data.text
+    comment.save()
+    
+    # Update mentions
+    from main.services.notifications import NotificationService
+    mentions = NotificationService.extract_mentions(data.text)
+    mentioned_users = NotificationService.get_users_from_mentions(mentions)
+    comment.mentioned_users.set(mentioned_users)
+    
+    return CommentSchema.from_orm(comment)
+
+
+@router.delete("/workspaces/{uuid:workspace_id}/comments/{int:comment_id}")
+@decorate_view(check_workspace_permission(WorkspaceMember.Role.COMMENTER))
+def delete_comment(request, workspace_id: UUID, comment_id: int):
+    """Delete a comment (only by the author or workspace admin)"""
+    workspace = get_object_or_404(Workspace, id=workspace_id)
+    comment = get_object_or_404(Comment, id=comment_id)
+    
+    # Check permissions
+    member = WorkspaceMember.objects.get(workspace=workspace, user=request.user)
+    if comment.author != request.user and member.role != WorkspaceMember.Role.ADMIN:
+        raise HttpError(403, "You can only delete your own comments or be an admin")
+    
+    comment.delete()
+    return {"message": "Comment deleted successfully"}
+
+
+# Notification Preference Endpoints
+@router.get("/notification-preferences", response=List[NotificationPreferenceSchema])
+def get_notification_preferences(request):
+    """Get all notification preferences for the current user"""
+    from main.models import EventType, NotificationPreference
+    
+    preferences = []
+    for event_type, _ in EventType.choices:
+        pref = NotificationPreference.get_user_preference(request.user, event_type)
+        preferences.append(NotificationPreferenceSchema.from_orm(pref))
+    
+    return preferences
+
+
+@router.put("/notification-preferences/{event_type}", response=NotificationPreferenceSchema)
+def update_notification_preference(request, event_type: str, data: NotificationPreferenceUpdate):
+    """Update notification preference for a specific event type"""
+    from main.models import EventType, NotificationPreference
+    
+    # Validate event type
+    valid_event_types = [choice[0] for choice in EventType.choices]
+    if event_type not in valid_event_types:
+        raise HttpError(400, "Invalid event type")
+    
+    pref, created = NotificationPreference.objects.get_or_create(
+        user=request.user,
+        event_type=event_type,
+        defaults={
+            'in_app_enabled': data.in_app_enabled,
+            'email_enabled': data.email_enabled,
+            'email_frequency': data.email_frequency
+        }
+    )
+    
+    if not created:
+        pref.in_app_enabled = data.in_app_enabled
+        pref.email_enabled = data.email_enabled
+        pref.email_frequency = data.email_frequency
+        pref.save()
+    
+    return NotificationPreferenceSchema.from_orm(pref)
+
+
+@router.put("/notification-preferences/bulk", response=List[NotificationPreferenceSchema])
+def bulk_update_notification_preferences(request, data: NotificationPreferencesBulkUpdate):
+    """Bulk update notification preferences"""
+    from main.models import EventType, NotificationPreference
+    
+    preferences = []
+    for event_type, pref_data in data.preferences.items():
+        # Validate event type
+        valid_event_types = [choice[0] for choice in EventType.choices]
+        if event_type not in valid_event_types:
+            continue
+            
+        pref, created = NotificationPreference.objects.get_or_create(
+            user=request.user,
+            event_type=event_type,
+            defaults={
+                'in_app_enabled': pref_data.in_app_enabled,
+                'email_enabled': pref_data.email_enabled,
+                'email_frequency': pref_data.email_frequency
+            }
+        )
+        
+        if not created:
+            pref.in_app_enabled = pref_data.in_app_enabled
+            pref.email_enabled = pref_data.email_enabled
+            pref.email_frequency = pref_data.email_frequency
+            pref.save()
+        
+        preferences.append(NotificationPreferenceSchema.from_orm(pref))
+    
+    return preferences
+
+
+# Notification Endpoints
+@router.get("/notifications", response=List[NotificationSchema])
+def get_notifications(request, unread_only: bool = False, limit: int = 50):
+    """Get notifications for the current user"""
+    from notifications.models import Notification
+    
+    notifications = Notification.objects.filter(recipient=request.user)
+    
+    if unread_only:
+        notifications = notifications.unread()
+    
+    notifications = notifications.order_by('-timestamp')[:limit]
+    
+    return [NotificationSchema.from_orm(notification) for notification in notifications]
+
+
+@router.post("/notifications/{int:notification_id}/mark-read")
+def mark_notification_read(request, notification_id: int):
+    """Mark a specific notification as read"""
+    from notifications.models import Notification
+    
+    notification = get_object_or_404(Notification, id=notification_id, recipient=request.user)
+    notification.mark_as_read()
+    
+    return {"message": "Notification marked as read"}
+
+
+@router.post("/notifications/mark-all-read")
+def mark_all_notifications_read(request):
+    """Mark all notifications as read for the current user"""
+    from notifications.models import Notification
+    
+    count = Notification.objects.filter(recipient=request.user, unread=True).count()
+    Notification.objects.filter(recipient=request.user, unread=True).mark_all_as_read()
+    
+    return {"message": f"{count} notifications marked as read"}
+
+
+@router.get("/notifications/unread-count", response=dict)
+def get_unread_notification_count(request):
+    """Get count of unread notifications"""
+    from notifications.models import Notification
+    
+    count = Notification.objects.filter(recipient=request.user, unread=True).count()
+    return {"count": count}

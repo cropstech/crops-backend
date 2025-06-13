@@ -3,7 +3,7 @@ from django.db import models
 from main.models import (
     Workspace, WorkspaceMember, Asset, AssetAnalysis, Board, BoardAsset,
     CustomField, CustomFieldOption, CustomFieldValue, AIActionResult,
-    CustomFieldOptionAIAction
+    CustomFieldOptionAIAction, Comment, Subscription, NotificationPreference, EmailBatch, BoardFollower
 )
 
 # Register your models here.
@@ -108,3 +108,58 @@ admin.site.register(CustomField, CustomFieldAdmin)
 admin.site.register(CustomFieldOption, CustomFieldOptionAdmin)
 admin.site.register(CustomFieldValue, CustomFieldValueAdmin)
 admin.site.register(AIActionResult, AIActionResultAdmin)
+
+admin.site.register(CustomFieldOptionAIAction)
+
+
+# Notification System Admin
+
+@admin.register(BoardFollower)
+class BoardFollowerAdmin(admin.ModelAdmin):
+    list_display = ['user', 'board', 'include_sub_boards', 'created_at']
+    list_filter = ['include_sub_boards', 'created_at', 'board__workspace']
+    search_fields = ['user__email', 'board__name']
+    readonly_fields = ['created_at']
+
+
+@admin.register(Comment)
+class CommentAdmin(admin.ModelAdmin):
+    list_display = ['author', 'content_type', 'object_id', 'text_preview', 'created_at', 'is_reply']
+    list_filter = ['content_type', 'created_at', 'parent']
+    search_fields = ['text', 'author__email']
+    readonly_fields = ['created_at', 'updated_at']
+    filter_horizontal = ['mentioned_users']
+    
+    def text_preview(self, obj):
+        return obj.text[:50] + "..." if len(obj.text) > 50 else obj.text
+    text_preview.short_description = "Text Preview"
+
+
+@admin.register(Subscription)
+class SubscriptionAdmin(admin.ModelAdmin):
+    list_display = ['user', 'content_type', 'object_id', 'event_types_display', 'created_at']
+    list_filter = ['content_type', 'created_at']
+    search_fields = ['user__email']
+    
+    def event_types_display(self, obj):
+        return ', '.join(obj.event_types) if obj.event_types else 'None'
+    event_types_display.short_description = "Event Types"
+
+
+@admin.register(NotificationPreference)
+class NotificationPreferenceAdmin(admin.ModelAdmin):
+    list_display = ['user', 'event_type', 'in_app_enabled', 'email_enabled', 'email_frequency']
+    list_filter = ['event_type', 'in_app_enabled', 'email_enabled']
+    search_fields = ['user__email']
+
+
+@admin.register(EmailBatch)
+class EmailBatchAdmin(admin.ModelAdmin):
+    list_display = ['user', 'notification_count', 'scheduled_for', 'sent', 'sent_at']
+    list_filter = ['sent', 'scheduled_for']
+    search_fields = ['user__email']
+    readonly_fields = ['created_at', 'sent_at']
+    
+    def notification_count(self, obj):
+        return obj.notifications.count()
+    notification_count.short_description = "Notifications"

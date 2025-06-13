@@ -313,7 +313,9 @@ def get_user(request):
         message="User details retrieved",
         data={
             "email": request.user.email,
-            "username": request.user.username,
+            "id": request.user.id,
+            "first_name": request.user.first_name,
+            "last_name": request.user.last_name,
         }
     )
 

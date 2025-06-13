@@ -117,7 +117,7 @@ def handle_subscription_created(sender, payload, occurred_at, **kwargs):
 #         pass
 
 # Make sure signals are loaded
-default_app_config = 'main.apps.MainConfig'
+default_app_config = 'main.apps.MainConfig' 
 
 @receiver(post_save, sender=CustomFieldValue)
 def handle_field_value_change(sender, instance, created, **kwargs):

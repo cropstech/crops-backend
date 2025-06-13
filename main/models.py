@@ -676,3 +676,199 @@ class AIActionResult(models.Model):
     def get_definition(self):
         """Get the full definition for this action"""
         return AIActionDefinition.get_definition(self.action)
+
+
+# Notification System Models
+
+class EventType(models.TextChoices):
+    """Event types for notifications"""
+    # Comments
+    COMMENT_ON_FOLLOWED_BOARD_ASSET = 'comment_on_followed_board_asset', 'New comments on assets in followed boards'
+    MENTION_IN_COMMENT = 'mention_in_comment', '@ mentions on assets'
+    REPLY_TO_THREAD = 'reply_to_thread', 'Replies to threads you\'ve started or are in'
+    
+    # Activity
+    SUB_BOARD_CREATED = 'sub_board_created', 'New sub-boards created in followed boards'
+    ASSET_UPLOADED_TO_FOLLOWED_BOARD = 'asset_uploaded_to_followed_board', 'New items uploaded to followed boards'
+    FIELD_CHANGE_IN_FOLLOWED_BOARD = 'field_change_in_followed_board', 'Custom field changes to followed boards & their assets'
+    
+    # Legacy/Additional events (keep for future use)
+    AI_CHECK_COMPLETED = 'ai_check_completed', 'AI Check Completed'
+    ASSET_FAVORITED = 'asset_favorited', 'Asset Favorited'
+
+
+class BoardFollower(models.Model):
+    """Users following specific boards for notifications"""
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='followed_boards')
+    board = models.ForeignKey('Board', on_delete=models.CASCADE, related_name='followers')
+    created_at = models.DateTimeField(auto_now_add=True)
+    
+    # Include sub-boards in notifications (e.g., if following parent, get notified about sub-boards)
+    include_sub_boards = models.BooleanField(default=True)
+    
+    class Meta:
+        unique_together = ['user', 'board']
+        indexes = [
+            models.Index(fields=['user', 'board']),
+        ]
+
+    def __str__(self):
+        return f"{self.user.email} follows {self.board.name}"
+
+
+class Comment(models.Model):
+    """Comments that can be attached to any object (Asset, Board, etc.)"""
+    content_type = models.ForeignKey(ContentType, on_delete=models.CASCADE)
+    object_id = models.UUIDField()
+    content_object = GenericForeignKey('content_type', 'object_id')
+    
+    author = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='comments')
+    text = models.TextField()
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    # For nested comments/replies
+    parent = models.ForeignKey('self', null=True, blank=True, on_delete=models.CASCADE, related_name='replies')
+    
+    # Store mentioned users for @ mentions
+    mentioned_users = models.ManyToManyField(
+        settings.AUTH_USER_MODEL, 
+        blank=True, 
+        related_name='mentioned_in_comments'
+    )
+    
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['content_type', 'object_id']),
+            models.Index(fields=['created_at']),
+            models.Index(fields=['author']),
+        ]
+
+    def __str__(self):
+        return f"Comment by {self.author.email} on {self.content_object}"
+
+    @property
+    def is_reply(self):
+        return self.parent is not None
+    
+    def get_thread_participants(self):
+        """Get all users who have participated in this comment thread"""
+        if self.parent:
+            # If this is a reply, get participants from the root comment
+            root_comment = self.parent
+            while root_comment.parent:
+                root_comment = root_comment.parent
+        else:
+            root_comment = self
+        
+        # Get all users who have commented in this thread
+        thread_comments = Comment.objects.filter(
+            models.Q(id=root_comment.id) | models.Q(parent=root_comment)
+        )
+        participants = set()
+        for comment in thread_comments:
+            participants.add(comment.author)
+        return participants
+
+
+class Subscription(models.Model):
+    """User subscriptions to receive notifications for specific objects"""
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='notification_subscriptions')
+    content_type = models.ForeignKey(ContentType, on_delete=models.CASCADE)
+    object_id = models.UUIDField()
+    content_object = GenericForeignKey('content_type', 'object_id')
+    
+    # JSON list of event types the user wants to be notified about
+    event_types = models.JSONField(
+        default=list,
+        help_text="List of event types to receive notifications for"
+    )
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    
+    class Meta:
+        unique_together = ['user', 'content_type', 'object_id']
+        indexes = [
+            models.Index(fields=['user', 'content_type', 'object_id']),
+        ]
+
+    def __str__(self):
+        return f"{self.user.email} subscribed to {self.content_object}"
+
+    def is_subscribed_to_event(self, event_type):
+        """Check if user is subscribed to a specific event type"""
+        return event_type in self.event_types
+
+
+class NotificationPreference(models.Model):
+    """User preferences for how they want to receive notifications"""
+    
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='notification_preferences')
+    event_type = models.CharField(max_length=60, choices=EventType.choices)
+    
+    # Separate boolean fields for each notification channel
+    in_app_enabled = models.BooleanField(default=True, help_text="Receive in-app notifications")
+    email_enabled = models.BooleanField(default=True, help_text="Receive email notifications")
+    # Future channels can be added here:
+    # sms_enabled = models.BooleanField(default=False, help_text="Receive SMS notifications")
+    # slack_enabled = models.BooleanField(default=False, help_text="Receive Slack notifications")
+    
+    # Email batching preferences
+    email_frequency = models.PositiveIntegerField(
+        default=5,
+        help_text="Minutes between email notifications (for batching)"
+    )
+    
+    class Meta:
+        unique_together = ['user', 'event_type']
+
+    def __str__(self):
+        channels = []
+        if self.in_app_enabled:
+            channels.append("in-app")
+        if self.email_enabled:
+            channels.append("email")
+        channel_str = ", ".join(channels) if channels else "disabled"
+        return f"{self.user.email} - {self.get_event_type_display()}: {channel_str}"
+
+    @property
+    def has_any_channel_enabled(self):
+        """Check if any notification channel is enabled"""
+        return self.in_app_enabled or self.email_enabled
+
+    @classmethod
+    def get_user_preference(cls, user, event_type):
+        """Get user's preference for a specific event type, with defaults"""
+        try:
+            return cls.objects.get(user=user, event_type=event_type)
+        except cls.DoesNotExist:
+            # Return default preference (both channels enabled)
+            return cls(
+                user=user, 
+                event_type=event_type, 
+                in_app_enabled=True, 
+                email_enabled=True, 
+                email_frequency=5
+            )
+
+
+class EmailBatch(models.Model):
+    """Batched email notifications to reduce email spam"""
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
+    notifications = models.ManyToManyField('notifications.Notification', related_name='email_batches')
+    
+    scheduled_for = models.DateTimeField()
+    sent = models.BooleanField(default=False)
+    sent_at = models.DateTimeField(null=True, blank=True)
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    
+    class Meta:
+        indexes = [
+            models.Index(fields=['user', 'scheduled_for']),
+            models.Index(fields=['sent', 'scheduled_for']),
+        ]
+
+    def __str__(self):
+        return f"Email batch for {self.user.email} - {self.notifications.count()} notifications"

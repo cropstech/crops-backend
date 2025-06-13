@@ -65,6 +65,10 @@ INSTALLED_APPS = [
     'corsheaders',
     'storages',
     'django_paddle_billing',
+    
+    # Notification system
+    'notifications',
+    'django_celery_beat',
 ]
 
 MIDDLEWARE = [
@@ -317,3 +321,21 @@ PADDLE_BILLING = {
     "PADDLE_ACCOUNT_MODEL": "users.CustomUser",
     "ADMIN_READONLY": True,
 }
+
+# Notification System Configuration
+NOTIFICATIONS_NOTIFICATION_MODEL = 'notifications.Notification'
+NOTIFICATIONS_SOFT_DELETE = True
+NOTIFICATIONS_USE_JSONFIELD = True
+
+# Celery Configuration (extending your existing setup)
+CELERY_ACCEPT_CONTENT = ['json']
+CELERY_TASK_SERIALIZER = 'json'
+CELERY_RESULT_SERIALIZER = 'json'
+CELERY_TIMEZONE = TIME_ZONE
+
+# Celery Beat Configuration for periodic tasks
+CELERY_BEAT_SCHEDULER = 'django_celery_beat.schedulers:DatabaseScheduler'
+
+# Email Batching Settings
+EMAIL_BATCH_FREQUENCY = 5  # minutes
+EMAIL_BATCH_MAX_SIZE = 20  # max notifications per email
