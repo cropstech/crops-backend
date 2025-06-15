@@ -736,6 +736,22 @@ class Comment(models.Model):
         blank=True, 
         related_name='mentioned_in_comments'
     )
+
+    # Annotation fields
+    annotation_type = models.CharField(
+        max_length=20,
+        choices=[
+            ('NONE', 'No annotation'),
+            ('POINT', 'Point annotation'),
+            ('AREA', 'Area annotation')
+        ],
+        default='NONE'
+    )
+    # Coordinates and dimensions for annotations
+    x = models.FloatField(null=True, blank=True)
+    y = models.FloatField(null=True, blank=True)
+    width = models.FloatField(null=True, blank=True)
+    height = models.FloatField(null=True, blank=True)
     
     class Meta:
         ordering = ['-created_at']
@@ -770,6 +786,26 @@ class Comment(models.Model):
         for comment in thread_comments:
             participants.add(comment.author)
         return participants
+
+    def get_annotation_data(self):
+        """Get the annotation data in a structured format"""
+        if self.annotation_type == 'NONE':
+            return None
+        elif self.annotation_type == 'POINT':
+            return {
+                'type': 'point',
+                'x': self.x,
+                'y': self.y
+            }
+        elif self.annotation_type == 'AREA':
+            return {
+                'type': 'area',
+                'x': self.x,
+                'y': self.y,
+                'width': self.width,
+                'height': self.height
+            }
+        return None
 
 
 class Subscription(models.Model):

@@ -617,6 +617,11 @@ class CommentSchema(Schema):
     has_replies: bool
     reply_count: int
     mentioned_users: List[str] = []  # List of mentioned user emails
+    annotation_type: str = 'NONE'  # 'NONE', 'POINT', or 'AREA'
+    x: Optional[float] = None
+    y: Optional[float] = None
+    width: Optional[float] = None
+    height: Optional[float] = None
     
     @staticmethod
     def from_orm(obj):
@@ -635,7 +640,12 @@ class CommentSchema(Schema):
             'is_reply': obj.is_reply,
             'has_replies': obj.replies.exists() if hasattr(obj, 'replies') else False,
             'reply_count': obj.replies.count() if hasattr(obj, 'replies') else 0,
-            'mentioned_users': [user.email for user in obj.mentioned_users.all()]
+            'mentioned_users': [user.email for user in obj.mentioned_users.all()],
+            'annotation_type': obj.annotation_type,
+            'x': obj.x,
+            'y': obj.y,
+            'width': obj.width,
+            'height': obj.height
         }
 
 
@@ -644,6 +654,11 @@ class CommentCreate(Schema):
     content_type: str  # 'asset' or 'board'
     object_id: UUID
     parent_id: Optional[int] = None
+    annotation_type: str = 'NONE'  # 'NONE', 'POINT', or 'AREA'
+    x: Optional[float] = None
+    y: Optional[float] = None
+    width: Optional[float] = None
+    height: Optional[float] = None
 
 
 class CommentUpdate(Schema):

@@ -1698,13 +1698,32 @@ def create_comment(request, workspace_id: UUID, data: CommentCreate):
     if data.parent_id:
         parent = get_object_or_404(Comment, id=data.parent_id)
     
+    # Validate annotation data
+    if data.annotation_type not in ['NONE', 'POINT', 'AREA']:
+        raise HttpError(400, "Invalid annotation type")
+    
+    if data.annotation_type == 'POINT':
+        if data.x is None or data.y is None:
+            raise HttpError(400, "Point annotation requires x and y coordinates")
+        if data.width is not None or data.height is not None:
+            raise HttpError(400, "Point annotation should not include width and height")
+    
+    if data.annotation_type == 'AREA':
+        if any(v is None for v in [data.x, data.y, data.width, data.height]):
+            raise HttpError(400, "Area annotation requires x, y, width, and height")
+    
     # Create comment
     comment = Comment.objects.create(
         content_type=content_type_obj,
         object_id=data.object_id,
         author=request.user,
         text=data.text,
-        parent=parent
+        parent=parent,
+        annotation_type=data.annotation_type,
+        x=data.x,
+        y=data.y,
+        width=data.width,
+        height=data.height
     )
     
     # Extract and process mentions
