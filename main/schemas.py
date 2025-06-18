@@ -581,6 +581,7 @@ class BoardFollowerSchema(Schema):
     board_id: UUID
     board_name: str
     include_sub_boards: bool
+    auto_followed: bool
     created_at: datetime
     
     @staticmethod
@@ -590,6 +591,7 @@ class BoardFollowerSchema(Schema):
             'board_id': obj.board.id,
             'board_name': obj.board.name,
             'include_sub_boards': obj.include_sub_boards,
+            'auto_followed': obj.auto_followed,
             'created_at': obj.created_at
         }
 
@@ -665,7 +667,48 @@ class CommentUpdate(Schema):
     text: str
 
 
+class EventPreferenceSchema(Schema):
+    """Schema for individual event type preferences"""
+    event_type: str
+    display_name: str
+    in_app_enabled: bool
+    email_enabled: bool
+
+
+class UserNotificationPreferenceSchema(Schema):
+    """Schema for user's complete notification preferences"""
+    user_id: int
+    email_frequency: int
+    preferences: List[EventPreferenceSchema]
+    created_at: datetime
+    updated_at: datetime
+    
+    @staticmethod
+    def from_orm(obj):
+        return {
+            'user_id': obj.user.id,
+            'email_frequency': obj.email_frequency,
+            'preferences': obj.get_all_preferences_display(),
+            'created_at': obj.created_at,
+            'updated_at': obj.updated_at
+        }
+
+
+class EventPreferenceUpdate(Schema):
+    """Schema for updating a single event type preference"""
+    in_app_enabled: bool
+    email_enabled: bool
+
+
+class UserNotificationPreferenceUpdate(Schema):
+    """Schema for updating user notification preferences"""
+    email_frequency: Optional[int] = None
+    event_preferences: Dict[str, EventPreferenceUpdate] = {}  # event_type -> preference
+
+
+# Legacy schemas for backward compatibility
 class NotificationPreferenceSchema(Schema):
+    """DEPRECATED: Use UserNotificationPreferenceSchema instead"""
     id: int
     event_type: str
     event_type_display: str
@@ -686,33 +729,105 @@ class NotificationPreferenceSchema(Schema):
 
 
 class NotificationPreferenceUpdate(Schema):
+    """DEPRECATED: Use UserNotificationPreferenceUpdate instead"""
     in_app_enabled: bool
     email_enabled: bool
     email_frequency: int = 5
 
 
 class NotificationPreferencesBulkUpdate(Schema):
+    """DEPRECATED: Use UserNotificationPreferenceUpdate instead"""
     preferences: Dict[str, NotificationPreferenceUpdate]  # event_type -> preference
 
 
 class NotificationSchema(Schema):
     id: int
+    actor_id: Optional[int] = None
     actor_email: Optional[str] = None
+    actor_first_name: Optional[str] = None
+    actor_last_name: Optional[str] = None
     verb: str
     description: str
+    action_object_type: Optional[str] = None
+    action_object_id: Optional[str] = None
     target_name: Optional[str] = None
+    target_type: Optional[str] = None
+    target_id: Optional[str] = None
+    workspace_id: Optional[str] = None
+    workspace_name: Optional[str] = None
     unread: bool
     timestamp: datetime
     data: Dict = {}
     
     @staticmethod
     def from_orm(obj):
+        # Extract actor information
+        actor_id = None
+        actor_email = None
+        actor_first_name = None
+        actor_last_name = None
+        
+        if obj.actor:
+            actor_id = obj.actor.id
+            actor_email = obj.actor.email
+            actor_first_name = obj.actor.first_name
+            actor_last_name = obj.actor.last_name
+        
+        # Extract target information
+        target_type = None
+        target_id = None
+        workspace_id = None
+        workspace_name = None
+        
+        if obj.target:
+            # Get the model name from the target object
+            target_type = obj.target.__class__.__name__.lower()
+            target_id = str(obj.target.id)
+            
+            # Extract workspace information from the target
+            workspace = None
+            if hasattr(obj.target, 'workspace'):
+                # Direct workspace relationship (Asset, Board, etc.)
+                workspace = obj.target.workspace
+            elif hasattr(obj.target, 'content_object') and hasattr(obj.target.content_object, 'workspace'):
+                # For objects like Comment that have a content_object (Asset/Board)
+                workspace = obj.target.content_object.workspace
+            elif target_type == 'comment' and hasattr(obj.target, 'content_object'):
+                # Special handling for comments - get workspace from the commented object
+                content_obj = obj.target.content_object
+                if hasattr(content_obj, 'workspace'):
+                    workspace = content_obj.workspace
+                elif hasattr(content_obj, 'boards') and content_obj.boards.exists():
+                    # For assets, get workspace from first board
+                    workspace = content_obj.boards.first().workspace
+            
+            if workspace:
+                workspace_id = str(workspace.id)
+                workspace_name = workspace.name
+        
+        # Extract action object information
+        action_object_type = None
+        action_object_id = None
+        
+        if obj.action_object:
+            action_object_type = obj.action_object.__class__.__name__.lower()
+            action_object_id = str(obj.action_object.id)
+        
         return {
             'id': obj.id,
-            'actor_email': obj.actor.email if obj.actor else None,
+            'actor_id': actor_id,
+            'actor_email': actor_email,
+            'actor_first_name': actor_first_name,
+            'actor_last_name': actor_last_name,
             'verb': obj.verb,
             'description': obj.description,
+            'action_object_type': action_object_type,
+            'action_object_id': action_object_id,
             'target_name': str(obj.target) if obj.target else None,
+            'target_type': target_type,
+            'target_id': target_id,
+            'workspace_id': workspace_id,
+            'workspace_name': workspace_name,
             'unread': obj.unread,
             'timestamp': obj.timestamp,
             'data': obj.data or {}

@@ -706,6 +706,9 @@ class BoardFollower(models.Model):
     # Include sub-boards in notifications (e.g., if following parent, get notified about sub-boards)
     include_sub_boards = models.BooleanField(default=True)
     
+    # Track if this was auto-followed (for analytics and UI purposes)
+    auto_followed = models.BooleanField(default=False, help_text="Whether this was automatically created by the system")
+    
     class Meta:
         unique_together = ['user', 'board']
         indexes = [
@@ -714,6 +717,22 @@ class BoardFollower(models.Model):
 
     def __str__(self):
         return f"{self.user.email} follows {self.board.name}"
+
+
+class BoardExplicitUnfollow(models.Model):
+    """Track when users explicitly unfollow boards to prevent auto re-following"""
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='board_explicit_unfollows')
+    board = models.ForeignKey('Board', on_delete=models.CASCADE, related_name='explicit_unfollows')
+    unfollowed_at = models.DateTimeField(auto_now_add=True)
+    
+    class Meta:
+        unique_together = ['user', 'board']
+        indexes = [
+            models.Index(fields=['user', 'board']),
+        ]
+
+    def __str__(self):
+        return f"{self.user.email} explicitly unfollowed {self.board.name}"
 
 
 class Comment(models.Model):
@@ -837,18 +856,127 @@ class Subscription(models.Model):
         return event_type in self.event_types
 
 
-class NotificationPreference(models.Model):
-    """User preferences for how they want to receive notifications"""
+class UserNotificationPreference(models.Model):
+    """User preferences for all notification types in a single model"""
     
-    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='notification_preferences')
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL, 
+        on_delete=models.CASCADE, 
+        related_name='notification_preference'
+    )
+    
+    # JSON field storing preferences for all event types
+    # Structure: {
+    #   "event_type": {
+    #     "in_app_enabled": bool,
+    #     "email_enabled": bool
+    #   }
+    # }
+    event_preferences = models.JSONField(default=dict)
+    
+    # Global email batching preference
+    email_frequency = models.PositiveIntegerField(
+        default=5,
+        help_text="Minutes between email notifications (for batching)"
+    )
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"Notification preferences for {self.user.email}"
+
+    @classmethod
+    def get_or_create_for_user(cls, user):
+        """Get or create notification preferences for a user with defaults"""
+        preference, created = cls.objects.get_or_create(
+            user=user,
+            defaults={
+                'event_preferences': cls.get_default_preferences(),
+                'email_frequency': 5
+            }
+        )
+        
+        # If preferences exist but are missing some event types, update them
+        if not created:
+            current_prefs = preference.event_preferences
+            default_prefs = cls.get_default_preferences()
+            
+            # Add any missing event types with default values
+            updated = False
+            for event_type, default_settings in default_prefs.items():
+                if event_type not in current_prefs:
+                    current_prefs[event_type] = default_settings
+                    updated = True
+            
+            if updated:
+                preference.event_preferences = current_prefs
+                preference.save()
+        
+        return preference
+
+    @staticmethod
+    def get_default_preferences():
+        """Get default preferences for all event types"""
+        defaults = {}
+        for event_type, _ in EventType.choices:
+            defaults[event_type] = {
+                'in_app_enabled': True,
+                'email_enabled': True
+            }
+        return defaults
+
+    def get_preference_for_event(self, event_type):
+        """Get preference settings for a specific event type"""
+        return self.event_preferences.get(event_type, {
+            'in_app_enabled': True,
+            'email_enabled': True
+        })
+
+    def is_in_app_enabled(self, event_type):
+        """Check if in-app notifications are enabled for an event type"""
+        return self.get_preference_for_event(event_type).get('in_app_enabled', True)
+
+    def is_email_enabled(self, event_type):
+        """Check if email notifications are enabled for an event type"""
+        return self.get_preference_for_event(event_type).get('email_enabled', True)
+
+    def update_event_preference(self, event_type, in_app_enabled=None, email_enabled=None):
+        """Update preference for a specific event type"""
+        if event_type not in self.event_preferences:
+            self.event_preferences[event_type] = {}
+        
+        if in_app_enabled is not None:
+            self.event_preferences[event_type]['in_app_enabled'] = in_app_enabled
+        if email_enabled is not None:
+            self.event_preferences[event_type]['email_enabled'] = email_enabled
+        
+        self.save()
+
+    def get_all_preferences_display(self):
+        """Get all preferences in a display-friendly format"""
+        preferences = []
+        for event_type, display_name in EventType.choices:
+            pref = self.get_preference_for_event(event_type)
+            preferences.append({
+                'event_type': event_type,
+                'display_name': display_name,
+                'in_app_enabled': pref.get('in_app_enabled', True),
+                'email_enabled': pref.get('email_enabled', True)
+            })
+        return preferences
+
+
+# Keep the old NotificationPreference model for backward compatibility during migration
+class NotificationPreference(models.Model):
+    """DEPRECATED: Use UserNotificationPreference instead"""
+    
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='old_notification_preferences')
     event_type = models.CharField(max_length=60, choices=EventType.choices)
     
     # Separate boolean fields for each notification channel
     in_app_enabled = models.BooleanField(default=True, help_text="Receive in-app notifications")
     email_enabled = models.BooleanField(default=True, help_text="Receive email notifications")
-    # Future channels can be added here:
-    # sms_enabled = models.BooleanField(default=False, help_text="Receive SMS notifications")
-    # slack_enabled = models.BooleanField(default=False, help_text="Receive Slack notifications")
     
     # Email batching preferences
     email_frequency = models.PositiveIntegerField(
@@ -875,18 +1003,36 @@ class NotificationPreference(models.Model):
 
     @classmethod
     def get_user_preference(cls, user, event_type):
-        """Get user's preference for a specific event type, with defaults"""
-        try:
-            return cls.objects.get(user=user, event_type=event_type)
-        except cls.DoesNotExist:
-            # Return default preference (both channels enabled)
-            return cls(
-                user=user, 
-                event_type=event_type, 
-                in_app_enabled=True, 
-                email_enabled=True, 
-                email_frequency=5
-            )
+        """DEPRECATED: Use UserNotificationPreference.get_or_create_for_user instead"""
+        # For backward compatibility, delegate to the new model
+        user_pref = UserNotificationPreference.get_or_create_for_user(user)
+        event_pref = user_pref.get_preference_for_event(event_type)
+        
+        # Return a mock object that behaves like the old model
+        class MockPreference:
+            def __init__(self, user, event_type, in_app_enabled, email_enabled, email_frequency):
+                self.user = user
+                self.event_type = event_type
+                self.in_app_enabled = in_app_enabled
+                self.email_enabled = email_enabled
+                self.email_frequency = email_frequency
+            
+            @property
+            def has_any_channel_enabled(self):
+                return self.in_app_enabled or self.email_enabled
+        
+        return MockPreference(
+            user=user,
+            event_type=event_type,
+            in_app_enabled=event_pref.get('in_app_enabled', True),
+            email_enabled=event_pref.get('email_enabled', True),
+            email_frequency=user_pref.email_frequency
+        )
+
+    @classmethod
+    def ensure_user_has_all_preferences(cls, user):
+        """DEPRECATED: Use UserNotificationPreference.get_or_create_for_user instead"""
+        UserNotificationPreference.get_or_create_for_user(user)
 
 
 class EmailBatch(models.Model):

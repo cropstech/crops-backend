@@ -10,14 +10,17 @@ from django_paddle_billing.signals import (
     subscription_trialing,
     subscription_updated
 )
-from .models import Workspace, CustomFieldValue
+from .models import Workspace, CustomFieldValue, UserNotificationPreference, WorkspaceMember
 from django_paddle_billing.models import Subscription
 import logging
 import time
 from django.db.models.signals import post_save
 from .services.ai_actions import trigger_ai_actions
+from django.contrib.auth import get_user_model
 
 logger = logging.getLogger(__name__)
+
+User = get_user_model()
 
 @receiver(subscription_created)
 def handle_subscription_created(sender, payload, occurred_at, **kwargs):
@@ -106,24 +109,69 @@ def handle_subscription_created(sender, payload, occurred_at, **kwargs):
 #         # Maybe limit workspace features
 #         pass
 
-# @receiver(subscription_updated)
-# def handle_subscription_updated(sender, subscription, **kwargs):
-#     """Handle subscription updates (like plan changes)"""
-#     workspace_sub = WorkspaceSubscription.objects.filter(
-#         subscription=subscription
-#     ).first()
-#     if workspace_sub:
-#         # Maybe update workspace features based on new plan
-#         pass
+@receiver(subscription_updated)
+def handle_subscription_updated(sender, subscription, **kwargs):
+    """Handle subscription updated event"""
+    logger.info(f"Subscription updated: {subscription.id}")
+    
+    # Add a small delay to ensure the subscription is fully processed
+    time.sleep(1)
+    
+    # Sync the subscription to get the latest data
+    try:
+        subscription.sync_from_paddle()
+        logger.info(f"Subscription {subscription.id} synced successfully")
+    except Exception as e:
+        logger.error(f"Failed to sync subscription {subscription.id}: {str(e)}")
 
 # Make sure signals are loaded
 default_app_config = 'main.apps.MainConfig' 
 
 @receiver(post_save, sender=CustomFieldValue)
-def handle_field_value_change(sender, instance, created, **kwargs):
-    """
-    When a field value is created or updated, trigger any associated AI actions
-    if it's a single-select field with an option that has AI actions enabled.
-    """
+def trigger_ai_actions_on_field_value_change(sender, instance, created, **kwargs):
+    """Trigger AI actions when a custom field value is created or updated"""
+    # Only trigger for single-select fields with option values
     if instance.field.field_type == 'SINGLE_SELECT' and instance.option_value:
-        trigger_ai_actions(instance) 
+        trigger_ai_actions(instance)
+
+@receiver(post_save, sender=User)
+def create_user_notification_preferences(sender, instance, created, **kwargs):
+    """Create default notification preferences when a new user is created"""
+    if created:
+        UserNotificationPreference.get_or_create_for_user(instance)
+
+@receiver(post_save, sender=WorkspaceMember)
+def auto_follow_boards_for_new_member(sender, instance, created, **kwargs):
+    """Auto-follow boards based on role when a new workspace member is created"""
+    if created:
+        from main.services.notifications import NotificationService
+        
+        workspace = instance.workspace
+        user = instance.user
+        role = instance.role
+        
+        # Get boards to auto-follow based on role
+        boards_to_follow = []
+        
+        if role == WorkspaceMember.Role.ADMIN:
+            # Admins follow all boards in the workspace
+            boards_to_follow = list(workspace.boards.all())
+            logger.info(f"Auto-following all {len(boards_to_follow)} boards for admin {user.email}")
+            
+        elif role in [WorkspaceMember.Role.EDITOR, WorkspaceMember.Role.COMMENTER]:
+            # Editors and Commenters follow only root/main boards
+            root_boards = workspace.boards.filter(parent=None)
+            boards_to_follow = list(root_boards)
+            logger.info(f"Auto-following {len(boards_to_follow)} root boards for {role.lower()} {user.email}")
+        
+        # Follow the boards
+        for board in boards_to_follow:
+            try:
+                NotificationService.follow_board(
+                    user=user,
+                    board=board,
+                    include_sub_boards=(role == WorkspaceMember.Role.ADMIN)  # Admins get sub-boards too
+                )
+                logger.info(f"Auto-followed board '{board.name}' for new {role.lower()} {user.email}")
+            except Exception as e:
+                logger.error(f"Failed to auto-follow board '{board.name}' for {user.email}: {str(e)}") 

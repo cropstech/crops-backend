@@ -33,7 +33,7 @@ from .models import (
     CustomFieldOption,
     CustomFieldOptionAIAction,
     CustomFieldValue,
-    NotificationPreference,
+    UserNotificationPreference,
     ShareLink,
     Workspace,
     WorkspaceInvitation,
@@ -82,9 +82,8 @@ from .schemas import (
     CommentSchema,
     CommentCreate,
     CommentUpdate,
-    NotificationPreferenceSchema,
-    NotificationPreferenceUpdate,
-    NotificationPreferencesBulkUpdate,
+    UserNotificationPreferenceSchema,
+    UserNotificationPreferenceUpdate,
     NotificationSchema
 )
 from .utils import (
@@ -549,6 +548,16 @@ def upload_file(
                     asset=asset,
                     added_by=request.user
                 )
+                
+                # Smart Auto-Follow: Follow board when user uploads to it
+                from main.services.notifications import NotificationService
+                if not NotificationService.is_following_board(request.user, board):
+                    NotificationService.follow_board(
+                        user=request.user,
+                        board=board,
+                        include_sub_boards=False  # Conservative default
+                    )
+                    logger.info(f"Auto-followed board '{board.name}' for user {request.user.email} after uploading asset")
         
         # Add asset_id to the upload info response
         upload_info['asset_id'] = asset.id
@@ -720,6 +729,16 @@ def upload_folder(
                     added_by=request.user
                 )
                 logger.info(f"Added asset {asset.id} to board {target_board.name}")
+                
+                # Smart Auto-Follow: Follow board when user uploads to it
+                from main.services.notifications import NotificationService
+                if not NotificationService.is_following_board(request.user, target_board):
+                    NotificationService.follow_board(
+                        user=request.user,
+                        board=target_board,
+                        include_sub_boards=False  # Conservative default
+                    )
+                    logger.info(f"Auto-followed board '{target_board.name}' for user {request.user.email} after folder upload")
             else:
                 logger.info(f"Asset {asset.id} added to workspace root (no board)")
     
@@ -1625,7 +1644,8 @@ def follow_board(request, workspace_id: UUID, board_id: UUID, data: BoardFollowe
     follower = NotificationService.follow_board(
         user=request.user,
         board=board,
-        include_sub_boards=data.include_sub_boards
+        include_sub_boards=data.include_sub_boards,
+        auto_followed=False  # Manual follow - clear auto_followed flag
     )
     
     return BoardFollowerSchema.from_orm(follower)
@@ -1734,6 +1754,28 @@ def create_comment(request, workspace_id: UUID, data: CommentCreate):
     if mentioned_users:
         comment.mentioned_users.set(mentioned_users)
     
+    # Smart Auto-Follow: Follow boards when user interacts with them
+    boards_to_follow = []
+    if data.content_type == 'asset':
+        # Get all boards containing this asset
+        board_assets = content_object.boardasset_set.select_related('board')
+        boards_to_follow = [ba.board for ba in board_assets]
+    elif data.content_type == 'board':
+        # User is commenting directly on a board
+        boards_to_follow = [content_object]
+    
+    # Auto-follow boards (only if not already following AND user hasn't explicitly unfollowed)
+    for board in boards_to_follow:
+        if (not NotificationService.is_following_board(request.user, board) and 
+            not NotificationService.has_explicitly_unfollowed(request.user, board)):
+            NotificationService.follow_board(
+                user=request.user,
+                board=board,
+                include_sub_boards=False,  # Conservative default - user can change later
+                auto_followed=True  # Mark as auto-followed
+            )
+            logger.info(f"Auto-followed board '{board.name}' for user {request.user.email} after commenting")
+    
     # Trigger notifications
     if data.content_type == 'asset':
         NotificationService.notify_comment_on_asset(comment, content_object)
@@ -1821,79 +1863,38 @@ def delete_comment(request, workspace_id: UUID, comment_id: int):
 
 
 # Notification Preference Endpoints
-@router.get("/notification-preferences", response=List[NotificationPreferenceSchema])
+@router.get("/notification-preferences", response=UserNotificationPreferenceSchema)
 def get_notification_preferences(request):
-    """Get all notification preferences for the current user"""
-    from main.models import EventType, NotificationPreference
-    
-    preferences = []
-    for event_type, _ in EventType.choices:
-        pref = NotificationPreference.get_user_preference(request.user, event_type)
-        preferences.append(NotificationPreferenceSchema.from_orm(pref))
-    
-    return preferences
+    """Get notification preferences for the current user"""
+    user_pref = UserNotificationPreference.get_or_create_for_user(request.user)
+    return UserNotificationPreferenceSchema.from_orm(user_pref)
 
 
-@router.put("/notification-preferences/{event_type}", response=NotificationPreferenceSchema)
-def update_notification_preference(request, event_type: str, data: NotificationPreferenceUpdate):
-    """Update notification preference for a specific event type"""
-    from main.models import EventType, NotificationPreference
+@router.put("/notification-preferences", response=UserNotificationPreferenceSchema)
+def update_notification_preferences(request, data: UserNotificationPreferenceUpdate):
+    """Update notification preferences for the current user"""
+    user_pref = UserNotificationPreference.get_or_create_for_user(request.user)
     
-    # Validate event type
-    valid_event_types = [choice[0] for choice in EventType.choices]
-    if event_type not in valid_event_types:
-        raise HttpError(400, "Invalid event type")
+    # Update email frequency if provided
+    if data.email_frequency is not None:
+        user_pref.email_frequency = data.email_frequency
     
-    pref, created = NotificationPreference.objects.get_or_create(
-        user=request.user,
-        event_type=event_type,
-        defaults={
-            'in_app_enabled': data.in_app_enabled,
-            'email_enabled': data.email_enabled,
-            'email_frequency': data.email_frequency
-        }
-    )
-    
-    if not created:
-        pref.in_app_enabled = data.in_app_enabled
-        pref.email_enabled = data.email_enabled
-        pref.email_frequency = data.email_frequency
-        pref.save()
-    
-    return NotificationPreferenceSchema.from_orm(pref)
-
-
-@router.put("/notification-preferences/bulk", response=List[NotificationPreferenceSchema])
-def bulk_update_notification_preferences(request, data: NotificationPreferencesBulkUpdate):
-    """Bulk update notification preferences"""
-    from main.models import EventType, NotificationPreference
-    
-    preferences = []
-    for event_type, pref_data in data.preferences.items():
+    # Update individual event preferences
+    for event_type, event_pref in data.event_preferences.items():
         # Validate event type
+        from main.models import EventType
         valid_event_types = [choice[0] for choice in EventType.choices]
         if event_type not in valid_event_types:
             continue
-            
-        pref, created = NotificationPreference.objects.get_or_create(
-            user=request.user,
+        
+        user_pref.update_event_preference(
             event_type=event_type,
-            defaults={
-                'in_app_enabled': pref_data.in_app_enabled,
-                'email_enabled': pref_data.email_enabled,
-                'email_frequency': pref_data.email_frequency
-            }
+            in_app_enabled=event_pref.in_app_enabled,
+            email_enabled=event_pref.email_enabled
         )
-        
-        if not created:
-            pref.in_app_enabled = pref_data.in_app_enabled
-            pref.email_enabled = pref_data.email_enabled
-            pref.email_frequency = pref_data.email_frequency
-            pref.save()
-        
-        preferences.append(NotificationPreferenceSchema.from_orm(pref))
     
-    return preferences
+    user_pref.save()
+    return UserNotificationPreferenceSchema.from_orm(user_pref)
 
 
 # Notification Endpoints

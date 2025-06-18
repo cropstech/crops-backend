@@ -20,6 +20,7 @@ django-json-widget==2.0.1
 django-mptt==0.17.0
 django-ninja==1.4.1
 django-paddle-billing==0.1.11
+django-ses==4.4.0
 django-storages==1.14.6
 filetype==1.2.0
 idna==3.10

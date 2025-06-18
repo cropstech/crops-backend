@@ -3,35 +3,58 @@ from django.contrib.auth import get_user_model
 from django.utils import timezone
 from notifications.signals import notify
 import re
+import logging
 
 from main.models import (
-    BoardFollower, NotificationPreference, EventType, Comment, Board, Asset,
+    BoardFollower, UserNotificationPreference, EventType, Comment, Board, Asset,
     CustomFieldValue, EmailBatch
 )
 
 User = get_user_model()
+logger = logging.getLogger(__name__)
 
 
 class NotificationService:
     """Service for managing notifications and board following"""
     
     @staticmethod
-    def follow_board(user, board, include_sub_boards=True):
+    def follow_board(user, board, include_sub_boards=True, auto_followed=False):
         """Follow a board for notifications"""
+        from main.models import BoardExplicitUnfollow
+        
+        # If user manually follows, remove any explicit unfollow record
+        if not auto_followed:
+            BoardExplicitUnfollow.objects.filter(user=user, board=board).delete()
+        
         follower, created = BoardFollower.objects.get_or_create(
             user=user,
             board=board,
-            defaults={'include_sub_boards': include_sub_boards}
+            defaults={
+                'include_sub_boards': include_sub_boards,
+                'auto_followed': auto_followed
+            }
         )
         if not created:
             follower.include_sub_boards = include_sub_boards
+            # Only update auto_followed if it's a manual follow (clear the flag)
+            if not auto_followed:
+                follower.auto_followed = False
             follower.save()
         return follower
     
     @staticmethod
     def unfollow_board(user, board):
-        """Unfollow a board"""
+        """Unfollow a board and record explicit unfollow to prevent auto re-follow"""
+        from main.models import BoardExplicitUnfollow
+        
+        # Delete the follow relationship
         BoardFollower.objects.filter(user=user, board=board).delete()
+        
+        # Record explicit unfollow to prevent auto re-follow
+        BoardExplicitUnfollow.objects.get_or_create(
+            user=user,
+            board=board
+        )
     
     @staticmethod
     def get_followed_boards(user):
@@ -42,6 +65,12 @@ class NotificationService:
     def is_following_board(user, board):
         """Check if user is following a specific board"""
         return BoardFollower.objects.filter(user=user, board=board).exists()
+    
+    @staticmethod
+    def has_explicitly_unfollowed(user, board):
+        """Check if user has explicitly unfollowed this board (to prevent auto re-follow)"""
+        from main.models import BoardExplicitUnfollow
+        return BoardExplicitUnfollow.objects.filter(user=user, board=board).exists()
     
     @staticmethod
     def get_board_followers(board, include_sub_board_followers=True):
@@ -94,36 +123,42 @@ class NotificationService:
     @staticmethod
     def notify_comment_on_asset(comment, asset):
         """Handle notifications when a comment is added to an asset"""
+        logger.info(f"Processing notifications for comment {comment.id} on asset {asset.id}")
+        
         # Get the board this asset belongs to
         board_assets = asset.boardasset_set.select_related('board')
         
         for board_asset in board_assets:
             board = board_asset.board
+            logger.info(f"Checking followers for board {board.id} ({board.name})")
             
             # Get followers of this board
             followers = NotificationService.get_board_followers(board)
+            logger.info(f"Found {followers.count()} followers for board {board.name}")
             
             for follower in followers:
                 user = follower.user
                 
                 # Don't notify the comment author
                 if user == comment.author:
+                    logger.info(f"Skipping notification for comment author {user.email}")
                     continue
                 
                 # Check user's notification preferences
-                pref = NotificationPreference.get_user_preference(
-                    user, 
-                    EventType.COMMENT_ON_FOLLOWED_BOARD_ASSET
-                )
+                pref = UserNotificationPreference.get_or_create_for_user(user)
+                event_pref = pref.get_preference_for_event(EventType.COMMENT_ON_FOLLOWED_BOARD_ASSET)
                 
-                if pref.in_app_enabled:
+                logger.info(f"User {user.email} preference for {EventType.COMMENT_ON_FOLLOWED_BOARD_ASSET}: {event_pref}")
+                
+                if event_pref.get('in_app_enabled', True):
+                    logger.info(f"Sending notification to {user.email} for comment on asset {asset.id}")
                     notify.send(
                         comment.author,
                         recipient=user,
                         verb='commented on',
                         action_object=comment,
                         target=asset,
-                        description=f'New comment on {asset.filename} in {board.name}',
+                        description=f'New comment on {getattr(asset, "name", "asset")} in {board.name}',
                         data={
                             'event_type': EventType.COMMENT_ON_FOLLOWED_BOARD_ASSET,
                             'board_id': str(board.id),
@@ -131,6 +166,9 @@ class NotificationService:
                             'comment_preview': comment.text[:100]
                         }
                     )
+                    logger.info(f"Notification sent successfully to {user.email}")
+                else:
+                    logger.info(f"User {user.email} has in-app notifications disabled for this event type")
     
     @staticmethod
     def notify_mentions(comment, mentioned_users):
@@ -140,12 +178,10 @@ class NotificationService:
             if user == comment.author:
                 continue
             
-            pref = NotificationPreference.get_user_preference(
-                user, 
-                EventType.MENTION_IN_COMMENT
-            )
+            pref = UserNotificationPreference.get_or_create_for_user(user)
+            event_pref = pref.get_preference_for_event(EventType.MENTION_IN_COMMENT)
             
-            if pref.in_app_enabled:
+            if event_pref.get('in_app_enabled', True):
                 notify.send(
                     comment.author,
                     recipient=user,
@@ -173,12 +209,10 @@ class NotificationService:
             if user == comment.author:
                 continue
             
-            pref = NotificationPreference.get_user_preference(
-                user, 
-                EventType.REPLY_TO_THREAD
-            )
+            pref = UserNotificationPreference.get_or_create_for_user(user)
+            event_pref = pref.get_preference_for_event(EventType.REPLY_TO_THREAD)
             
-            if pref.in_app_enabled:
+            if event_pref.get('in_app_enabled', True):
                 notify.send(
                     comment.author,
                     recipient=user,
@@ -208,12 +242,10 @@ class NotificationService:
             if not follower.include_sub_boards:
                 continue
             
-            pref = NotificationPreference.get_user_preference(
-                user, 
-                EventType.SUB_BOARD_CREATED
-            )
+            pref = UserNotificationPreference.get_or_create_for_user(user)
+            event_pref = pref.get_preference_for_event(EventType.SUB_BOARD_CREATED)
             
-            if pref.in_app_enabled:
+            if event_pref.get('in_app_enabled', True):
                 notify.send(
                     board.created_by,  # Assuming board has created_by field
                     recipient=user,
@@ -237,19 +269,17 @@ class NotificationService:
         for follower in followers:
             user = follower.user
             
-            pref = NotificationPreference.get_user_preference(
-                user, 
-                EventType.ASSET_UPLOADED_TO_FOLLOWED_BOARD
-            )
+            pref = UserNotificationPreference.get_or_create_for_user(user)
+            event_pref = pref.get_preference_for_event(EventType.ASSET_UPLOADED_TO_FOLLOWED_BOARD)
             
-            if pref.in_app_enabled:
+            if event_pref.get('in_app_enabled', True):
                 notify.send(
-                    asset.uploaded_by,
+                    asset.created_by,  # Use created_by instead of uploaded_by
                     recipient=user,
                     verb='uploaded an asset',
                     action_object=asset,
                     target=board,
-                    description=f'New asset "{asset.filename}" uploaded to {board.name}',
+                    description=f'New asset "{getattr(asset, "name", "asset")}" uploaded to {board.name}',
                     data={
                         'event_type': EventType.ASSET_UPLOADED_TO_FOLLOWED_BOARD,
                         'board_id': str(board.id),
@@ -278,13 +308,11 @@ class NotificationService:
             for follower in followers:
                 user = follower.user
                 
-                pref = NotificationPreference.get_user_preference(
-                    user, 
-                    EventType.FIELD_CHANGE_IN_FOLLOWED_BOARD
-                )
+                pref = UserNotificationPreference.get_or_create_for_user(user)
+                event_pref = pref.get_preference_for_event(EventType.FIELD_CHANGE_IN_FOLLOWED_BOARD)
                 
-                if pref.in_app_enabled:
-                    target_name = getattr(field_value.content_object, 'filename', None) or \
+                if event_pref.get('in_app_enabled', True):
+                    target_name = getattr(field_value.content_object, 'name', None) or \
                                  getattr(field_value.content_object, 'name', 'item')
                     
                     notify.send(

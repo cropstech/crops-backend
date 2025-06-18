@@ -3,7 +3,7 @@ from django.db import models
 from main.models import (
     Workspace, WorkspaceMember, Asset, AssetAnalysis, Board, BoardAsset,
     CustomField, CustomFieldOption, CustomFieldValue, AIActionResult,
-    CustomFieldOptionAIAction, Comment, Subscription, NotificationPreference, EmailBatch, BoardFollower
+    CustomFieldOptionAIAction, Comment, Subscription, NotificationPreference, EmailBatch, BoardFollower, BoardExplicitUnfollow, UserNotificationPreference
 )
 
 # Register your models here.
@@ -116,10 +116,18 @@ admin.site.register(CustomFieldOptionAIAction)
 
 @admin.register(BoardFollower)
 class BoardFollowerAdmin(admin.ModelAdmin):
-    list_display = ['user', 'board', 'include_sub_boards', 'created_at']
-    list_filter = ['include_sub_boards', 'created_at', 'board__workspace']
+    list_display = ['user', 'board', 'include_sub_boards', 'auto_followed', 'created_at']
+    list_filter = ['include_sub_boards', 'auto_followed', 'created_at', 'board__workspace']
     search_fields = ['user__email', 'board__name']
     readonly_fields = ['created_at']
+
+
+@admin.register(BoardExplicitUnfollow)
+class BoardExplicitUnfollowAdmin(admin.ModelAdmin):
+    list_display = ['user', 'board', 'unfollowed_at']
+    list_filter = ['unfollowed_at', 'board__workspace']
+    search_fields = ['user__email', 'board__name']
+    readonly_fields = ['unfollowed_at']
 
 
 @admin.register(Comment)
@@ -152,6 +160,11 @@ class NotificationPreferenceAdmin(admin.ModelAdmin):
     list_filter = ['event_type', 'in_app_enabled', 'email_enabled']
     search_fields = ['user__email']
 
+@admin.register(UserNotificationPreference)
+class UserNotificationPreferenceAdmin(admin.ModelAdmin):
+    list_display = ['user', 'event_preferences', 'email_frequency']
+    list_filter = ['email_frequency']
+    search_fields = ['user__email']
 
 @admin.register(EmailBatch)
 class EmailBatchAdmin(admin.ModelAdmin):
@@ -163,3 +176,4 @@ class EmailBatchAdmin(admin.ModelAdmin):
     def notification_count(self, obj):
         return obj.notifications.count()
     notification_count.short_description = "Notifications"
+

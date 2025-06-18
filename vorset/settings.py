@@ -26,7 +26,7 @@ env = environ.Env(
     # set casting, default value
     DJANGO_DEBUG=(bool, True),
     ALLOWED_HOSTS=(list, ['127.0.0.1', 'localhost']),
-    FRONTEND_URL=(str, 'https://localhost:9100'),
+    FRONTEND_URL=(str, 'https://localhost:9000'),
     STATIC_URL=(str, 'https://assetia.s3.us-east-2.amazonaws.com/static/'),
     AWS_S3_CUSTOM_DOMAIN=(str, 'assetia.s3.us-east-2.amazonaws.com'),
     AWS_STORAGE_BUCKET_NAME=(str, 'assetia'),
@@ -168,13 +168,11 @@ EMAIL_PORT = 587
 EMAIL_USE_TLS = True
 EMAIL_HOST_USER = 'support@vorset.com'
 EMAIL_HOST_PASSWORD = 'your-app-specific-password'
-DEFAULT_FROM_EMAIL = 'Assetia <support@baseline.is>'
+DEFAULT_FROM_EMAIL = 'Crops <support@crops.is>'
 
 
 # Frontend URL for verification links
 FRONTEND_URL = env('FRONTEND_URL')  # Or your frontend URL
-# Background Removal Url
-BACKGROUND_REMOVAL_URL = 'http://localhost:8100/remove-background/'
 
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:9000",

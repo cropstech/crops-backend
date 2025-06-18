@@ -40,6 +40,8 @@ class SignInSchema(BaseModel):
 class SignUpSchema(BaseModel):
     email: str
     password: str
+    first_name: str
+    last_name: str
     invite_token: Optional[str] = None
 
 class ResendVerificationSchema(BaseModel):
@@ -375,9 +377,11 @@ def register(request, payload: SignUpSchema):
         # Create user
         user = User.objects.create_user(
             username=payload.email, 
-            email=payload.email, 
+            email=payload.email,
             password=payload.password,
-            email_verified=verified
+            email_verified=verified,
+            first_name=payload.first_name,
+            last_name=payload.last_name
         )
         logger.info(f"User created: {user.email}")
         logger.info(f"Invite token: {payload.invite_token}")
@@ -404,6 +408,8 @@ def register(request, payload: SignUpSchema):
             data={
                 "email": user.email,
                 "username": user.username,
+                "first_name": user.first_name,
+                "last_name": user.last_name,
                 "needs_verification": not verified
             }
         )
