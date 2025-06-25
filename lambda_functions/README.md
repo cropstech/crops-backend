@@ -1,6 +1,6 @@
 # S3 ZIP Creator Lambda Function
 
-This AWS Lambda function creates ZIP archives from multiple S3 objects without downloading them to your application server. It's used by the Vorset application for bulk asset downloads.
+This AWS Lambda function creates ZIP archives from multiple S3 objects without downloading them to your application server. It's used by the Crops application for bulk asset downloads.
 
 ## Features
 
@@ -82,7 +82,7 @@ Create a test event with the following JSON:
 
 Click "Test" to run the function and verify it works correctly.
 
-## Integration with Vorset
+## Integration with Crops
 
 The Lambda function is called from the `DownloadManager.create_zip_archive` method in `main/download.py`. Make sure the function name in the code matches the name of your Lambda function.
 

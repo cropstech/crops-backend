@@ -260,14 +260,6 @@ class AssetSchema(Schema):
             return dirname(obj.file.name)
         return None
     
-    @staticmethod
-    def resolve_custom_fields(obj):
-        return obj.custom_fields.all()
-    
-    @staticmethod
-    def resolve_custom_field_values(obj):
-        return obj.custom_field_values.all()
-
 class BoardReorderSchema(Schema):
     board_id: UUID
     new_order: int

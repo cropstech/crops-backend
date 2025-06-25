@@ -6,8 +6,8 @@ from django.core.exceptions import ObjectDoesNotExist
 from ninja.security import django_auth
 
 api = NinjaAPI(
-    title="vorset API",
-    description="API for vorset services",
+    title="crops API",
+    description="API for crops services",
     version='1.0',
     csrf=True,
     auth=django_auth
