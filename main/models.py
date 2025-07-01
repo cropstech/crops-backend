@@ -251,6 +251,26 @@ class ShareLink(models.Model):
         return True
 
 class Board(MPTTModel):
+    VIEW_TYPES = [
+        ('GALLERY', 'Gallery'),
+        ('KANBAN', 'Kanban'),
+        ('TABLE', 'Table'),
+    ]
+    
+    SORT_CHOICES = [
+        ('custom', 'Custom order (drag and drop)'),
+        ('-date_uploaded', 'Date uploaded (newest first)'),
+        ('date_uploaded', 'Date uploaded (oldest first)'),
+        ('-date_created', 'Date created (newest first)'),
+        ('date_created', 'Date created (oldest first)'),
+        ('-date_modified', 'Date modified (newest first)'),
+        ('date_modified', 'Date modified (oldest first)'),
+        ('name', 'Name (A-Z)'),
+        ('-name', 'Name (Z-A)'),
+        ('-size', 'File size (largest first)'),
+        ('size', 'File size (smallest first)'),
+    ]
+    
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     name = models.CharField(max_length=200)
     description = models.TextField(blank=True, null=True)
@@ -260,6 +280,25 @@ class Board(MPTTModel):
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True)
     updated_at = models.DateTimeField(auto_now=True)
     order = models.PositiveIntegerField(default=0, help_text="Order in which to display this board")
+    default_view = models.CharField(
+        max_length=20,
+        choices=VIEW_TYPES,
+        default='GALLERY',
+        help_text="Default view type for this board"
+    )
+    kanban_group_by_field = models.ForeignKey(
+        'CustomField',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        help_text="Custom field to group by when using kanban view (should be a single-select field)"
+    )
+    default_sort = models.CharField(
+        max_length=30,
+        choices=SORT_CHOICES,
+        default='-date_uploaded',
+        help_text="Default sort order for assets in this board"
+    )
 
     class MPTTMeta:
         order_insertion_by = ['order', 'name']
@@ -303,6 +342,68 @@ class Board(MPTTModel):
         Get all descendants in a single query
         """
         return self.get_descendants().select_related('parent', 'created_by')
+    
+    def clean(self):
+        """Validate board configuration"""
+        from django.core.exceptions import ValidationError
+        
+        # If kanban_group_by_field is set, it should be a single-select field
+        if self.kanban_group_by_field:
+            if self.kanban_group_by_field.field_type != 'SINGLE_SELECT':
+                raise ValidationError({
+                    'kanban_group_by_field': 'Kanban grouping field must be a single-select field.'
+                })
+            
+            # The field should belong to the same workspace
+            if self.kanban_group_by_field.workspace != self.workspace:
+                raise ValidationError({
+                    'kanban_group_by_field': 'Kanban grouping field must belong to the same workspace as the board.'
+                })
+    
+    def save(self, *args, **kwargs):
+        self.clean()
+        super().save(*args, **kwargs)
+    
+    def reorder_assets(self, asset_order_list):
+        """
+        Reorder assets in this board based on a list of asset IDs.
+        Used for custom drag-and-drop ordering.
+        
+        Args:
+            asset_order_list: List of asset UUIDs in the desired order
+        """
+        for index, asset_id in enumerate(asset_order_list):
+            try:
+                board_asset = BoardAsset.objects.get(board=self, asset_id=asset_id)
+                board_asset.order = index
+                board_asset.save()
+            except BoardAsset.DoesNotExist:
+                # Asset not in this board, skip
+                continue
+    
+    def get_effective_kanban_group_by_field(self):
+        """
+        Get the kanban grouping field, with smart defaulting if none is explicitly set.
+        Returns the explicitly set field, or finds a SINGLE_SELECT field in the workspace,
+        preferring one titled "Status".
+        """
+        # If explicitly set, return it
+        if self.kanban_group_by_field:
+            return self.kanban_group_by_field
+        
+        # Smart defaulting: look for SINGLE_SELECT fields in the workspace
+        single_select_fields = CustomField.objects.filter(
+            workspace=self.workspace,
+            field_type='SINGLE_SELECT'
+        ).order_by('title')
+        
+        # First, try to find a field titled "Status" (case insensitive)
+        status_field = single_select_fields.filter(title__iexact='status').first()
+        if status_field:
+            return status_field
+        
+        # Otherwise, return the first SINGLE_SELECT field found
+        return single_select_fields.first()
 
 class Asset(models.Model):
     ASSET_TYPES = [
@@ -387,6 +488,11 @@ class BoardAsset(models.Model):
     added_at = models.DateTimeField(auto_now_add=True)
     added_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True)
     position = models.JSONField(null=True)  # for storing layout position if needed
+    order = models.PositiveIntegerField(default=0, help_text="Manual ordering position within this board")
+    
+    class Meta:
+        ordering = ['order', 'added_at']
+        unique_together = ['board', 'asset']
 
 class AssetAnalysis(models.Model):
     """Stores AI-generated analysis results for assets"""

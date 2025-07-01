@@ -135,11 +135,17 @@ class BoardCreateSchema(Schema):
     name: str
     description: Optional[str] = None
     parent_id: Optional[UUID] = None
+    default_view: Optional[str] = 'GALLERY'
+    kanban_group_by_field_id: Optional[int] = None
+    default_sort: Optional[str] = '-date_uploaded'
 
 class BoardUpdateSchema(Schema):
     name: Optional[str] = None
     description: Optional[str] = None
     parent_id: Optional[Union[UUID, str]] = None
+    default_view: Optional[str] = None
+    kanban_group_by_field_id: Optional[int] = None
+    default_sort: Optional[str] = None
 
 class BoardOutSchema(Schema):
     id: UUID
@@ -154,6 +160,10 @@ class BoardOutSchema(Schema):
     child_count: int
     children: Optional[List['BoardOutSchema']] = None
     thumbnail: Optional[str] = None
+    default_view: str
+    kanban_group_by_field_id: Optional[int] = None
+    kanban_group_by_field: Optional['CustomFieldSchema'] = None
+    default_sort: str
     
     model_config = ConfigDict(
         from_attributes=True
@@ -162,6 +172,15 @@ class BoardOutSchema(Schema):
     @staticmethod
     def resolve_child_count(obj):
         return obj.children.count()
+    
+    @staticmethod
+    def resolve_kanban_group_by_field_id(obj):
+        effective_field = obj.get_effective_kanban_group_by_field()
+        return effective_field.id if effective_field else None
+    
+    @staticmethod
+    def resolve_kanban_group_by_field(obj):
+        return obj.get_effective_kanban_group_by_field()
 
 class DownloadInitiateSchema(Schema):
     asset_id: UUID
@@ -266,6 +285,12 @@ class BoardReorderSchema(Schema):
 
 class BoardReorderRequestSchema(Schema):
     items: List[BoardReorderSchema]
+
+class AssetReorderSchema(Schema):
+    asset_ids: List[UUID]
+
+class AssetReorderRequestSchema(Schema):
+    asset_ids: List[UUID] = Field(..., description="List of asset UUIDs in the desired order")
 
 class UploadPartSchema(Schema):
     part_number: int
@@ -824,3 +849,42 @@ class NotificationSchema(Schema):
             'timestamp': obj.timestamp,
             'data': obj.data or {}
         }
+
+# Filter Schemas for Asset Listing
+
+class CustomFieldFilterValue(Schema):
+    """Filter for a specific custom field value"""
+    is_: Optional[int] = Field(None, alias="is", description="Filter by specific option ID (for single/multi-select fields)")
+    not_set: Optional[bool] = Field(None, alias="notSet", description="Filter for fields that have no value set")
+    contains: Optional[str] = Field(None, description="Text contains filter (for text fields)")
+    date_from: Optional[datetime] = Field(None, alias="dateFrom", description="Date range start (for date fields)")
+    date_to: Optional[datetime] = Field(None, alias="dateTo", description="Date range end (for date fields)")
+
+class CustomFieldFilter(Schema):
+    """Filter configuration for a custom field"""
+    id: int = Field(..., description="Custom field ID")
+    filter: CustomFieldFilterValue = Field(..., description="Filter criteria for this field")
+
+class TagFilter(Schema):
+    """Filter for tags (for future implementation)"""
+    includes: Optional[List[str]] = Field(None, description="Assets must include all of these tags")
+    excludes: Optional[List[str]] = Field(None, description="Assets must not include any of these tags")
+
+class AssetListFilters(Schema):
+    """Complete filter configuration for asset listing"""
+    # Pagination and sorting
+    page: int = Field(1, description="Page number (1-based)")
+    page_size: int = Field(60, description="Number of items per page")
+    order_by: str = Field("-date_uploaded", description="Sort field (prefix with - for descending)")
+    search: Optional[str] = Field(None, description="Search term for file names")
+    board_id: Optional[UUID] = Field(None, alias="boardId", description="Filter by specific board")
+    
+    # Filter options
+    custom_fields: Optional[List[CustomFieldFilter]] = Field(None, alias="customFields", description="Custom field filters")
+    tags: Optional[TagFilter] = Field(None, description="Tag filters (future implementation)")
+    file_type: Optional[List[str]] = Field(None, alias="fileType", description="Filter by file types (IMAGE, VIDEO, etc.)")
+    favorite: Optional[bool] = Field(None, description="Filter by favorite status")
+    date_uploaded_from: Optional[datetime] = Field(None, alias="dateUploadedFrom", description="Uploaded after this date")
+    date_uploaded_to: Optional[datetime] = Field(None, alias="dateUploadedTo", description="Uploaded before this date")
+
+

@@ -13,6 +13,8 @@ from django.conf import settings
 from ninja.files import UploadedFile
 from django.db import transaction
 from django.core.files.storage import default_storage
+from django.db.models import Q
+from django.contrib.contenttypes.models import ContentType
 from concurrent.futures import ThreadPoolExecutor
 import logging
 import boto3
@@ -61,6 +63,7 @@ from .schemas import (
     AssetBulkDownloadSchema,
     BulkDownloadResponseSchema,
     BoardReorderSchema,
+    AssetReorderRequestSchema,
     UploadCompleteSchema,
     UploadResponseSchema,
     CustomFieldSchema,
@@ -84,7 +87,8 @@ from .schemas import (
     CommentUpdate,
     UserNotificationPreferenceSchema,
     UserNotificationPreferenceUpdate,
-    NotificationSchema
+    NotificationSchema,
+    AssetListFilters
 )
 from .utils import (
     send_invitation_email, process_file_metadata, process_file_metadata_background, 
@@ -149,22 +153,16 @@ def create_workspace(request, data: WorkspaceCreateSchema):
         
         # Create status options with their AI actions
         status_options = [
-            {
-                "label": "In Progress",
-                "color": "#7B1FA2",
-                "order": 1,
-                "ai_actions": []
-            },
-            {
-                "label": "Ready for Review",
-                "color": "#00796B",
-                "order": 2,
-                "ai_actions": []
-            },
+            # {
+            #     "label": "In Progress",
+            #     "color": "#7B1FA2",
+            #     "order": 1,
+            #     "ai_actions": []
+            # },
             {
                 "label": "AI Check",
                 "color": "#E64A19",
-                "order": 3,
+                "order": 1,
                 "ai_actions": [
                     {
                         "action": "spelling_grammar",
@@ -198,6 +196,12 @@ def create_workspace(request, data: WorkspaceCreateSchema):
                         }
                     }
                 ]
+            },
+            {
+                "label": "Ready for Review",
+                "color": "#00796B",
+                "order": 2,
+                "ai_actions": []
             },
             {
                 "label": "Done",
@@ -754,37 +758,150 @@ def get_asset(request, workspace_id: UUID, asset_id: UUID):
     )
     return asset
 
-@router.get("/workspaces/{uuid:workspace_id}/assets", response=List[AssetSchema])
+@router.post("/workspaces/{uuid:workspace_id}/assets", response=List[AssetSchema])
 @decorate_view(check_workspace_permission(WorkspaceMember.Role.COMMENTER))
 def list_assets(
     request,
     workspace_id: UUID,
-    page: int = 1,
-    page_size: int = 60,
-    order_by: str = "-date_uploaded",
-    search: str = None,
-    board_id: Optional[UUID] = None,
-):
-    """List assets in a workspace, optionally filtered by board"""
+    filters: Optional[AssetListFilters] = None,
+):  
     workspace = get_object_or_404(Workspace, id=workspace_id)
     
+    # Use defaults if no filters provided
+    if not filters:
+        filters = AssetListFilters()
+    
+    # Debug logging
+    print(f"DEBUG: Received filters: {filters}")
+    print(f"DEBUG: Board ID: {filters.board_id}")
+    print(f"DEBUG: Custom fields: {filters.custom_fields}")
+    
     # Calculate offset
-    offset = (page - 1) * page_size
+    offset = (filters.page - 1) * filters.page_size
     
     # Base query with prefetched boards
     query = Asset.objects.filter(workspace_id=workspace_id).prefetch_related('boards')
     
     # Filter by board if specified
-    if board_id:
-        board = get_object_or_404(Board, workspace=workspace, id=board_id)
+    board = None
+    if filters.board_id:
+        board = get_object_or_404(Board, workspace=workspace, id=filters.board_id)
         query = query.filter(boards=board)
     
     # Add search filter if search term provided
-    if search:
-        query = query.filter(file__icontains=search)
+    if filters.search:
+        query = query.filter(file__icontains=filters.search)
+    
+    # Apply custom field filters
+    if filters and filters.custom_fields:
+        asset_content_type = ContentType.objects.get_for_model(Asset)
+        
+        for field_filter in filters.custom_fields:
+            field_obj = get_object_or_404(CustomField, workspace=workspace, id=field_filter.id)
+            filter_criteria = field_filter.filter
+            
+            if filter_criteria.not_set:
+                logger.info(f"Filtering for assets that don't have field {field_obj} set")
+                # Filter for assets that don't have this field set
+                query = query.exclude(
+                    id__in=CustomFieldValue.objects.filter(
+                        field=field_obj,
+                        content_type=asset_content_type
+                    ).values_list('object_id', flat=True)
+                )
+            
+            elif filter_criteria.is_:
+                logger.info(f"Filtering for assets that have field {field_obj} set to {filter_criteria.is_}")
+                # Filter by specific option value (single-select or multi-select)
+                option = get_object_or_404(CustomFieldOption, field=field_obj, id=filter_criteria.is_)
+                
+                if field_obj.field_type == 'SINGLE_SELECT':
+                    query = query.filter(
+                        id__in=CustomFieldValue.objects.filter(
+                            field=field_obj,
+                            content_type=asset_content_type,
+                            option_value=option
+                        ).values_list('object_id', flat=True)
+                    )
+                elif field_obj.field_type == 'MULTI_SELECT':
+                    query = query.filter(
+                        id__in=CustomFieldValue.objects.filter(
+                            field=field_obj,
+                            content_type=asset_content_type,
+                            multi_options=option
+                        ).values_list('object_id', flat=True)
+                    )
+            
+            elif filter_criteria.contains and field_obj.field_type == 'TEXT':
+                # Text contains filter
+                query = query.filter(
+                    id__in=CustomFieldValue.objects.filter(
+                        field=field_obj,
+                        content_type=asset_content_type,
+                        text_value__icontains=filter_criteria.contains
+                    ).values_list('object_id', flat=True)
+                )
+            
+            elif (filter_criteria.date_from or filter_criteria.date_to) and field_obj.field_type == 'DATE':
+                # Date range filter
+                date_q = Q()
+                if filter_criteria.date_from:
+                    date_q &= Q(date_value__gte=filter_criteria.date_from)
+                if filter_criteria.date_to:
+                    date_q &= Q(date_value__lte=filter_criteria.date_to)
+                
+                query = query.filter(
+                    id__in=CustomFieldValue.objects.filter(
+                        field=field_obj,
+                        content_type=asset_content_type
+                    ).filter(date_q).values_list('object_id', flat=True)
+                )
+    
+    # Apply other filters
+    if filters:
+        if filters.file_type:
+            query = query.filter(file_type__in=filters.file_type)
+        
+        if filters.favorite is not None:
+            query = query.filter(favorite=filters.favorite)
+        
+        if filters.date_uploaded_from:
+            query = query.filter(date_uploaded__gte=filters.date_uploaded_from)
+        
+        if filters.date_uploaded_to:
+            query = query.filter(date_uploaded__lte=filters.date_uploaded_to)
+    
+    # TODO: Implement tag filtering when tags are ready
+    # if filters.tags:
+    #     if filters.tags.includes:
+    #         query = query.filter(tags__name__in=filters.tags.includes)
+    #     if filters.tags.excludes:
+    #         query = query.exclude(tags__name__in=filters.tags.excludes)
+    
+    # Determine the sort order
+    order_by = filters.order_by
+    
+    # If filtering by board and no explicit order_by provided, use board's default_sort
+    if board and filters.order_by == '-date_uploaded':  # Default from AssetListFilters
+        order_by = board.default_sort
+    
+    # Handle custom sorting for boards
+    if board and order_by == 'custom':
+        # For custom sorting, we need to join with BoardAsset table and order by the order field
+        query = query.select_related().annotate(
+            board_order=models.Subquery(
+                BoardAsset.objects.filter(
+                    board=board,
+                    asset_id=models.OuterRef('id')
+                ).values('order')[:1]
+            )
+        ).order_by('board_order', 'date_uploaded')
+    else:
+        # Use standard ordering
+        query = query.order_by(order_by)
     
     # Get paginated and filtered assets
-    assets = query.order_by(order_by)[offset:offset + page_size]
+    assets = query.distinct()[offset:offset + filters.page_size]
     
     return list(assets)
 
@@ -981,12 +1098,26 @@ def create_board(request, workspace_id: UUID, data: BoardCreateSchema):
             id=data.parent_id
         )
     
+    # If kanban_group_by_field_id is provided, verify it exists and belongs to the same workspace
+    kanban_group_by_field = None
+    if data.kanban_group_by_field_id:
+        kanban_group_by_field = get_object_or_404(
+            CustomField.objects.filter(workspace_id=workspace_id),
+            id=data.kanban_group_by_field_id
+        )
+        # Validate that it's a single-select field
+        if kanban_group_by_field.field_type != 'SINGLE_SELECT':
+            raise HttpError(400, "Kanban grouping field must be a single-select field")
+    
     board = Board.objects.create(
         workspace=workspace,
         name=data.name,
         description=data.description if data.description else None,
         parent=parent,
-        created_by=request.user
+        created_by=request.user,
+        default_view=data.default_view or 'GALLERY',
+        kanban_group_by_field=kanban_group_by_field,
+        default_sort=data.default_sort or '-date_uploaded'
     )
     
     return board
@@ -1007,19 +1138,23 @@ def list_boards(
     """
     workspace = get_object_or_404(Workspace, id=workspace_id)
     
+    # Base queryset with optimized fetching
+    base_queryset = Board.objects.select_related('kanban_group_by_field').prefetch_related('children')
+    
     if parent_id:
         parent = get_object_or_404(Board, workspace=workspace, id=parent_id)
         if recursive:
             # Start with the parent board
             boards = [parent]
-            # Add all descendants
-            boards.extend(parent.get_descendants())
+            # Add all descendants with optimized query
+            descendants = parent.get_descendants().select_related('kanban_group_by_field')
+            boards.extend(descendants)
             return boards
-        return list(Board.objects.filter(workspace=workspace, parent=parent_id).prefetch_related('children'))
+        return list(base_queryset.filter(workspace=workspace, parent=parent_id))
     else:
         # Return root boards (no parent)
         logger.info(f"Getting root boards for workspace {workspace.id}")
-        root_boards = list(Board.objects.filter(workspace=workspace, parent=None).prefetch_related('children'))
+        root_boards = list(base_queryset.filter(workspace=workspace, parent=None))
         if recursive:
             # When recursive is True, we only want the root boards with their children
             # The children will be included in the response through the schema
@@ -1031,7 +1166,7 @@ def list_boards(
 def get_board(request, workspace_id: UUID, board_id: UUID):
     """Get a specific board"""
     board = get_object_or_404(
-        Board.objects.filter(workspace_id=workspace_id),
+        Board.objects.select_related('kanban_group_by_field').filter(workspace_id=workspace_id),
         id=board_id
     )
     return board
@@ -1077,6 +1212,25 @@ def update_board(request, workspace_id: UUID, board_id: UUID, data: BoardUpdateS
                 id=data.parent_id
             )
             board.parent = parent
+    
+    if data.default_view is not None:
+        board.default_view = data.default_view
+    
+    if data.default_sort is not None:
+        board.default_sort = data.default_sort
+    
+    if data.kanban_group_by_field_id is not None:
+        if data.kanban_group_by_field_id == 0:  # Allow setting to None/null
+            board.kanban_group_by_field = None
+        else:
+            kanban_group_by_field = get_object_or_404(
+                CustomField.objects.filter(workspace_id=workspace_id),
+                id=data.kanban_group_by_field_id
+            )
+            # Validate that it's a single-select field
+            if kanban_group_by_field.field_type != 'SINGLE_SELECT':
+                raise HttpError(400, "Kanban grouping field must be a single-select field")
+            board.kanban_group_by_field = kanban_group_by_field
         
     board.save()
     return board
@@ -1091,6 +1245,23 @@ def delete_board(request, workspace_id: UUID, board_id: UUID):
     )
     board.delete()
     return {"success": True}
+
+@router.post("/workspaces/{uuid:workspace_id}/boards/{uuid:board_id}/assets/reorder")
+@decorate_view(check_workspace_permission(WorkspaceMember.Role.EDITOR))
+def reorder_board_assets(request, workspace_id: UUID, board_id: UUID, data: AssetReorderRequestSchema):
+    """Reorder assets within a board for custom sorting"""
+    workspace = get_object_or_404(Workspace, id=workspace_id)
+    board = get_object_or_404(Board, workspace=workspace, id=board_id)
+    
+    # Use the board's reorder_assets method
+    board.reorder_assets(data.asset_ids)
+    
+    # Optionally set the board's default_sort to 'custom' if it isn't already
+    if board.default_sort != 'custom':
+        board.default_sort = 'custom'
+        board.save()
+    
+    return {"success": True, "reordered_count": len(data.asset_ids)}
 
 @router.post("/workspaces/{uuid:workspace_id}/assets/{uuid:asset_id}/download", response=DownloadResponseSchema)
 @decorate_view(check_workspace_permission(WorkspaceMember.Role.COMMENTER))
