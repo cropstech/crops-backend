@@ -337,3 +337,8 @@ CELERY_BEAT_SCHEDULER = 'django_celery_beat.schedulers:DatabaseScheduler'
 # Email Batching Settings
 EMAIL_BATCH_FREQUENCY = 5  # minutes
 EMAIL_BATCH_MAX_SIZE = 20  # max notifications per email
+
+# Asset Checker Service Configuration
+ASSET_CHECKER_API_URL = env('ASSET_CHECKER_API_URL', default='https://api.asset-checker.example.com')
+ASSET_CHECKER_API_KEY = env('ASSET_CHECKER_API_KEY', default='your-asset-checker-api-key')
+WEBHOOK_BASE_URL = env('WEBHOOK_BASE_URL', default='https://api.crops.is')

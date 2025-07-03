@@ -88,7 +88,8 @@ from .schemas import (
     UserNotificationPreferenceSchema,
     UserNotificationPreferenceUpdate,
     NotificationSchema,
-    AssetListFilters
+    AssetListFilters,
+    PaginatedAssetResponse
 )
 from .utils import (
     send_invitation_email, process_file_metadata, process_file_metadata_background, 
@@ -758,7 +759,7 @@ def get_asset(request, workspace_id: UUID, asset_id: UUID):
     )
     return asset
 
-@router.post("/workspaces/{uuid:workspace_id}/assets", response=List[AssetSchema])
+@router.post("/workspaces/{uuid:workspace_id}/assets", response=PaginatedAssetResponse)
 @decorate_view(check_workspace_permission(WorkspaceMember.Role.COMMENTER))
 def list_assets(
     request,
@@ -900,10 +901,26 @@ def list_assets(
         # Use standard ordering
         query = query.order_by(order_by)
     
+    # Get total count before applying pagination
+    total_count = query.distinct().count()
+    
+    # Calculate pagination metadata
+    total_pages = (total_count + filters.page_size - 1) // filters.page_size  # Ceiling division
+    has_more = filters.page < total_pages
+    
     # Get paginated and filtered assets
     assets = query.distinct()[offset:offset + filters.page_size]
     
-    return list(assets)
+    return {
+        "data": list(assets),
+        "pagination": {
+            "page": filters.page,
+            "page_size": filters.page_size,
+            "total_count": total_count,
+            "total_pages": total_pages,
+            "has_more": has_more
+        }
+    }
 
 @router.get("/products", response=ProductSubscriptionSchema)
 def products(request, workspace_id: str):
@@ -2113,3 +2130,299 @@ def get_unread_notification_count(request):
     
     count = Notification.objects.filter(recipient=request.user, unread=True).count()
     return {"count": count}
+
+# Asset Checker Analysis Endpoints
+
+class AssetCheckerAnalysisStartSchema(Schema):
+    """Schema for starting asset checker analysis"""
+    asset_id: UUID
+    checks_config: Dict[str, Any]
+    use_webhook: bool = True
+    timeout: Optional[int] = None
+
+class AssetCheckerAnalysisResponseSchema(Schema):
+    """Schema for analysis start response"""
+    check_id: str
+    status: str
+    webhook_url: Optional[str] = None
+    polling_url: Optional[str] = None
+    estimated_completion: Optional[str] = None
+
+class AssetCheckerSyncAnalysisSchema(Schema):
+    """Schema for synchronous asset analysis"""
+    asset_id: UUID
+    checks_config: Dict[str, Any]
+    timeout: Optional[int] = 300
+
+@router.post("/workspaces/{uuid:workspace_id}/assets/{uuid:asset_id}/analysis/start", response=AssetCheckerAnalysisResponseSchema)
+@decorate_view(check_workspace_permission(WorkspaceMember.Role.EDITOR))
+def start_asset_analysis(request, workspace_id: UUID, asset_id: UUID, data: AssetCheckerAnalysisStartSchema):
+    """
+    Start asset checker analysis for an asset
+    
+    Initiates analysis with the Asset Checker Lambda service. The analysis will
+    run asynchronously and results will be delivered via webhook or can be polled.
+    
+    Permissions:
+    - Requires EDITOR role in the workspace
+    
+    Returns:
+    - Analysis initiation response with check_id and status URLs
+    """
+    workspace = get_object_or_404(Workspace, id=workspace_id)
+    asset = get_object_or_404(Asset, workspace=workspace, id=asset_id)
+    
+    # Validate that asset has a file
+    if not asset.file:
+        raise HttpError(400, "Asset must have a file to analyze")
+    
+    try:
+        from .services.asset_checker_service import AssetCheckerService, AnalysisRequest, CheckConfiguration
+        
+        # Extract S3 bucket and key from asset file URL
+        file_url = asset.file.url
+        # Parse S3 URL to get bucket and key
+        import re
+        s3_pattern = r'https://([^.]+)\.s3\.amazonaws\.com/(.+)'
+        match = re.match(s3_pattern, file_url)
+        if not match:
+            raise HttpError(400, "Unable to parse S3 location from asset file")
+        
+        s3_bucket = match.group(1)
+        s3_key = match.group(2)
+        
+        # Create checks configuration
+        checks_config = CheckConfiguration(
+            spelling_grammar=data.checks_config.get('spelling_grammar'),
+            color_contrast=data.checks_config.get('color_contrast'),
+            image_quality=data.checks_config.get('image_quality'),
+            image_artifacts=data.checks_config.get('image_artifacts'),
+            custom_checks=data.checks_config.get('custom_checks')
+        )
+        
+        # Create analysis request
+        analysis_request = AnalysisRequest(
+            s3_bucket=s3_bucket,
+            s3_key=s3_key,
+            checks_config=checks_config,
+            use_webhook=data.use_webhook,
+            timeout=data.timeout
+        )
+        
+        # Start analysis
+        service = AssetCheckerService()
+        response = service.start_analysis(analysis_request)
+        
+        return AssetCheckerAnalysisResponseSchema(
+            check_id=response.check_id,
+            status=response.status,
+            webhook_url=response.webhook_url,
+            polling_url=response.polling_url,
+            estimated_completion=response.estimated_completion
+        )
+        
+    except Exception as e:
+        logger.error(f"Failed to start asset analysis for {asset_id}: {str(e)}")
+        raise HttpError(500, f"Failed to start analysis: {str(e)}")
+
+@router.post("/workspaces/{uuid:workspace_id}/assets/{uuid:asset_id}/analysis/sync", response=Dict[str, Any])
+@decorate_view(check_workspace_permission(WorkspaceMember.Role.EDITOR))
+def analyze_asset_synchronous(request, workspace_id: UUID, asset_id: UUID, data: AssetCheckerSyncAnalysisSchema):
+    """
+    Perform synchronous asset analysis
+    
+    Runs asset analysis synchronously and waits for completion. This is useful
+    for immediate results but may timeout for long-running analyses.
+    
+    Permissions:
+    - Requires EDITOR role in the workspace
+    
+    Returns:
+    - Complete analysis results
+    """
+    workspace = get_object_or_404(Workspace, id=workspace_id)
+    asset = get_object_or_404(Asset, workspace=workspace, id=asset_id)
+    
+    # Validate that asset has a file
+    if not asset.file:
+        raise HttpError(400, "Asset must have a file to analyze")
+    
+    try:
+        from .services.asset_checker_service import AssetCheckerService, AnalysisRequest, CheckConfiguration
+        
+        # Extract S3 bucket and key from asset file URL
+        file_url = asset.file.url
+        import re
+        s3_pattern = r'https://([^.]+)\.s3\.amazonaws\.com/(.+)'
+        match = re.match(s3_pattern, file_url)
+        if not match:
+            raise HttpError(400, "Unable to parse S3 location from asset file")
+        
+        s3_bucket = match.group(1)
+        s3_key = match.group(2)
+        
+        # Create checks configuration
+        checks_config = CheckConfiguration(
+            spelling_grammar=data.checks_config.get('spelling_grammar'),
+            color_contrast=data.checks_config.get('color_contrast'),
+            image_quality=data.checks_config.get('image_quality'),
+            image_artifacts=data.checks_config.get('image_artifacts'),
+            custom_checks=data.checks_config.get('custom_checks')
+        )
+        
+        # Create analysis request
+        analysis_request = AnalysisRequest(
+            s3_bucket=s3_bucket,
+            s3_key=s3_key,
+            checks_config=checks_config,
+            use_webhook=False,  # Force polling mode for sync
+            timeout=data.timeout
+        )
+        
+        # Run synchronous analysis
+        service = AssetCheckerService()
+        results = service.analyze_synchronous(analysis_request)
+        
+        return results
+        
+    except Exception as e:
+        logger.error(f"Failed to analyze asset synchronously {asset_id}: {str(e)}")
+        raise HttpError(500, f"Analysis failed: {str(e)}")
+
+@router.get("/workspaces/{uuid:workspace_id}/assets/analysis/{check_id}/status", response=Dict[str, Any])
+@decorate_view(check_workspace_permission(WorkspaceMember.Role.COMMENTER))
+def get_analysis_status(request, workspace_id: UUID, check_id: str):
+    """
+    Get status of an asset analysis
+    
+    Returns the current status and progress of an ongoing or completed analysis.
+    
+    Permissions:
+    - Requires COMMENTER role in the workspace
+    
+    Returns:
+    - Status information including progress and current state
+    """
+    workspace = get_object_or_404(Workspace, id=workspace_id)
+    
+    try:
+        from .services.asset_checker_service import AssetCheckerService
+        
+        service = AssetCheckerService()
+        status_data = service.get_analysis_status(check_id)
+        
+        return status_data
+        
+    except Exception as e:
+        logger.error(f"Failed to get analysis status for {check_id}: {str(e)}")
+        raise HttpError(500, f"Failed to get status: {str(e)}")
+
+@router.get("/workspaces/{uuid:workspace_id}/assets/analysis/{check_id}/results", response=Dict[str, Any])
+@decorate_view(check_workspace_permission(WorkspaceMember.Role.COMMENTER))
+def get_analysis_results(request, workspace_id: UUID, check_id: str):
+    """
+    Get complete analysis results
+    
+    Returns the detailed results of a completed asset analysis including
+    all check results and metadata.
+    
+    Permissions:
+    - Requires COMMENTER role in the workspace
+    
+    Returns:
+    - Complete analysis results
+    """
+    workspace = get_object_or_404(Workspace, id=workspace_id)
+    
+    try:
+        from .services.asset_checker_service import AssetCheckerService
+        
+        service = AssetCheckerService()
+        results_data = service.get_analysis_results(check_id)
+        
+        return results_data
+        
+    except Exception as e:
+        logger.error(f"Failed to get analysis results for {check_id}: {str(e)}")
+        raise HttpError(500, f"Failed to get results: {str(e)}")
+
+@router.get("/workspaces/{uuid:workspace_id}/assets/{uuid:asset_id}/analyses", response=List[Dict[str, Any]])
+@decorate_view(check_workspace_permission(WorkspaceMember.Role.COMMENTER))
+def list_asset_analyses(request, workspace_id: UUID, asset_id: UUID):
+    """
+    List all analyses for an asset
+    
+    Returns a list of all Asset Checker analyses that have been run for this asset,
+    including their status and basic metadata.
+    
+    Permissions:
+    - Requires COMMENTER role in the workspace
+    
+    Returns:
+    - List of analysis records
+    """
+    workspace = get_object_or_404(Workspace, id=workspace_id)
+    asset = get_object_or_404(Asset, workspace=workspace, id=asset_id)
+    
+    try:
+        # For now, we'll return analyses that match the asset's S3 location
+        # In the future, we might want to add an asset foreign key to AssetCheckerAnalysis
+        file_url = asset.file.url
+        import re
+        s3_pattern = r'https://([^.]+)\.s3\.amazonaws\.com/(.+)'
+        match = re.match(s3_pattern, file_url)
+        if not match:
+            return []
+        
+        s3_bucket = match.group(1)
+        s3_key = match.group(2)
+        
+        from .models import AssetCheckerAnalysis
+        analyses = AssetCheckerAnalysis.objects.filter(
+            s3_bucket=s3_bucket,
+            s3_key=s3_key
+        ).order_by('-created_at')
+        
+        return [
+            {
+                'check_id': analysis.check_id,
+                'status': analysis.status,
+                'webhook_received': analysis.webhook_received,
+                'created_at': analysis.created_at.isoformat() if analysis.created_at else None,
+                'completed_at': analysis.completed_at.isoformat() if analysis.completed_at else None,
+                'has_results': bool(analysis.results),
+                'error_message': analysis.error_message
+            }
+            for analysis in analyses
+        ]
+        
+    except Exception as e:
+        logger.error(f"Failed to list analyses for asset {asset_id}: {str(e)}")
+        raise HttpError(500, f"Failed to list analyses: {str(e)}")
+
+@router.delete("/workspaces/{uuid:workspace_id}/fields/{int:field_id}")
+@decorate_view(check_workspace_permission(WorkspaceMember.Role.ADMIN))
+def delete_field(request, workspace_id: UUID, field_id: int):
+    """
+    Delete a custom field and all its related data.
+    
+    This endpoint will:
+    - Delete all field values associated with this field
+    - Delete all field options and their AI actions
+    - Delete the field itself
+    
+    Permissions:
+    - Requires ADMIN role in the workspace
+    
+    Returns:
+    - Success confirmation
+    """
+    workspace = get_object_or_404(Workspace, id=workspace_id)
+    field = get_object_or_404(CustomField, workspace=workspace, id=field_id)
+    
+    with transaction.atomic():
+        # The field's options and values will be deleted automatically
+        # due to CASCADE delete settings in the models
+        field.delete()
+    
+    return {"message": "Field deleted successfully"}

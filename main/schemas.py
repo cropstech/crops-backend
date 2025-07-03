@@ -278,6 +278,19 @@ class AssetSchema(Schema):
             # Get the full path and remove the filename
             return dirname(obj.file.name)
         return None
+
+class PaginationSchema(Schema):
+    """Pagination metadata for paginated responses"""
+    page: int
+    page_size: int
+    total_count: int
+    total_pages: int
+    has_more: bool
+
+class PaginatedAssetResponse(Schema):
+    """Paginated response for asset listing"""
+    data: List[AssetSchema]
+    pagination: PaginationSchema
     
 class BoardReorderSchema(Schema):
     board_id: UUID
@@ -874,7 +887,7 @@ class AssetListFilters(Schema):
     """Complete filter configuration for asset listing"""
     # Pagination and sorting
     page: int = Field(1, description="Page number (1-based)")
-    page_size: int = Field(60, description="Number of items per page")
+    page_size: int = Field(10, description="Number of items per page")
     order_by: str = Field("-date_uploaded", description="Sort field (prefix with - for descending)")
     search: Optional[str] = Field(None, description="Search term for file names")
     board_id: Optional[UUID] = Field(None, alias="boardId", description="Filter by specific board")

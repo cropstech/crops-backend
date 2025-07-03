@@ -191,3 +191,145 @@ To complete the implementation:
    - Handle subscription lifecycle events
    - Implement feature gating based on subscription plans
    - Add usage tracking and limits
+
+## Asset Checker Integration
+
+The Asset Checker service provides automated analysis of uploaded assets including spelling/grammar checks, color contrast analysis, image quality assessment, and artifact detection.
+
+### Configuration
+
+Add the following environment variables to your `.env` file:
+
+```bash
+# Asset Checker Service Configuration
+ASSET_CHECKER_API_URL=https://your-asset-checker-lambda.amazonaws.com
+ASSET_CHECKER_API_KEY=your-api-key-here
+WEBHOOK_BASE_URL=https://your-backend-domain.com
+```
+
+### API Endpoints
+
+#### Start Asset Analysis
+```http
+POST /api/v1/workspaces/{workspace_id}/assets/{asset_id}/analysis/start
+```
+
+**Request Body:**
+```json
+{
+  "asset_id": "uuid-here",
+  "checks_config": {
+    "spelling_grammar": {
+      "language": "en",
+      "check_spelling": true,
+      "check_grammar": true
+    },
+    "color_contrast": {
+      "wcag_level": "AA"
+    },
+    "image_quality": {
+      "min_resolution": 1920,
+      "check_compression": true
+    },
+    "image_artifacts": {
+      "sensitivity": "medium"
+    }
+  },
+  "use_webhook": true,
+  "timeout": 300
+}
+```
+
+**Response:**
+```json
+{
+  "check_id": "analysis-uuid",
+  "status": "processing",
+  "webhook_url": "https://your-backend.com/webhooks/assets/webhook/analysis-uuid",
+  "polling_url": "https://your-backend.com/webhooks/assets/status/analysis-uuid",
+  "estimated_completion": "2024-01-01T12:00:00Z"
+}
+```
+
+#### Synchronous Analysis
+```http
+POST /api/v1/workspaces/{workspace_id}/assets/{asset_id}/analysis/sync
+```
+
+Performs analysis synchronously and waits for completion (up to timeout).
+
+#### Check Analysis Status
+```http
+GET /api/v1/workspaces/{workspace_id}/assets/analysis/{check_id}/status
+```
+
+#### Get Analysis Results
+```http
+GET /api/v1/workspaces/{workspace_id}/assets/analysis/{check_id}/results
+```
+
+#### List Asset Analyses
+```http
+GET /api/v1/workspaces/{workspace_id}/assets/{asset_id}/analyses
+```
+
+### Webhook Endpoints
+
+#### Asset Checker Webhook
+```http
+POST /webhooks/assets/webhook/{check_id}
+```
+
+Receives analysis results from the Lambda service.
+
+#### Status Polling
+```http
+GET /webhooks/assets/status/{check_id}
+```
+
+#### Results Retrieval
+```http
+GET /webhooks/assets/results/{check_id}
+```
+
+### Usage Example
+
+1. **Upload an asset** to your workspace
+2. **Start analysis**:
+   ```bash
+   curl -X POST \
+     "https://your-api.com/api/v1/workspaces/{workspace_id}/assets/{asset_id}/analysis/start" \
+     -H "Content-Type: application/json" \
+     -d '{
+       "checks_config": {
+         "spelling_grammar": {"language": "en"},
+         "color_contrast": {"wcag_level": "AA"}
+       }
+     }'
+   ```
+3. **Receive webhook** with results or **poll for status**
+4. **Retrieve complete results** when analysis is complete
+
+### Integration with Custom Fields
+
+The Asset Checker integrates with the existing Custom Field system. When a Single Select field option has AI actions configured, selecting that option will automatically trigger the configured analysis checks.
+
+### Database Model
+
+The `AssetCheckerAnalysis` model stores:
+- `check_id`: Unique identifier for the analysis
+- `status`: Current status (pending, processing, completed, failed)
+- `s3_bucket`/`s3_key`: Location of the analyzed asset
+- `results`: Complete analysis results (JSON)
+- `webhook_received`: Whether webhook was received
+- `created_at`/`completed_at`: Timing information
+
+### Error Handling
+
+The service includes comprehensive error handling:
+- Invalid asset files
+- Network timeouts
+- Lambda service errors
+- Webhook validation failures
+
+All errors are logged and returned with appropriate HTTP status codes.

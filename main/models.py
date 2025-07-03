@@ -1160,3 +1160,48 @@ class EmailBatch(models.Model):
 
     def __str__(self):
         return f"Email batch for {self.user.email} - {self.notifications.count()} notifications"
+
+
+class AssetCheckerAnalysis(models.Model):
+    """Stores Asset Checker Lambda service analysis results"""
+    STATUS_CHOICES = [
+        ('pending', 'Pending'),
+        ('processing', 'Processing'),
+        ('completed', 'Completed'),
+        ('failed', 'Failed'),
+    ]
+    
+    check_id = models.CharField(max_length=100, unique=True)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
+    s3_bucket = models.CharField(max_length=255)
+    s3_key = models.CharField(max_length=1024)
+    webhook_received = models.BooleanField(default=False)
+    results = models.JSONField(null=True, blank=True)
+    error_message = models.TextField(null=True, blank=True)
+    
+    # Tracking metadata
+    use_webhook = models.BooleanField(default=True)
+    webhook_url = models.URLField(null=True, blank=True)
+    callback_url = models.URLField(null=True, blank=True)
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        indexes = [
+            models.Index(fields=['check_id']),
+            models.Index(fields=['status']),
+            models.Index(fields=['created_at']),
+        ]
+    
+    def __str__(self):
+        return f"Asset Checker Analysis {self.check_id} - {self.status}"
+    
+    @property
+    def is_complete(self):
+        return self.status in ['completed', 'failed']
+    
+    @property
+    def is_successful(self):
+        return self.status == 'completed' and self.results is not None
