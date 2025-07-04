@@ -113,7 +113,7 @@ class DownloadManager:
         part_size: Optional[int] = None
     ) -> dict:
         """Initiate a file download, either single or multipart"""
-        bucket = settings.AWS_STORAGE_BUCKET_NAME
+        bucket = settings.AWS_STORAGE_CDN_BUCKET_NAME
         key = asset.file.name
         total_size = asset.size
         download_id = str(uuid.uuid4())
@@ -166,7 +166,7 @@ class DownloadManager:
         
         The Lambda function handles everything server-side, with no local downloads.
         """
-        bucket = settings.AWS_STORAGE_BUCKET_NAME
+        bucket = settings.AWS_STORAGE_CDN_BUCKET_NAME
         
         # Generate a unique key for the output ZIP file
         timestamp = timezone.now().strftime("%Y%m%d-%H%M%S")

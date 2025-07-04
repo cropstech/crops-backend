@@ -27,9 +27,9 @@ env = environ.Env(
     DJANGO_DEBUG=(bool, True),
     ALLOWED_HOSTS=(list, ['127.0.0.1', 'localhost']),
     FRONTEND_URL=(str, 'https://localhost:9000'),
-    STATIC_URL=(str, 'https://assetia.s3.us-east-2.amazonaws.com/static/'),
-    AWS_S3_CUSTOM_DOMAIN=(str, 'assetia.s3.us-east-2.amazonaws.com'),
-    AWS_STORAGE_BUCKET_NAME=(str, 'assetia'),
+    STATIC_URL=(str),
+    AWS_S3_CUSTOM_DOMAIN=(str),
+    AWS_STORAGE_BUCKET_NAME=(str),
     AWS_S3_LOCATION=(str, 'us-east-2'),
     CELERY_BROKER_URL=(str, 'redis://:tzJ*cEscpUonRqAoVAQ9TNB%8KkGSD58%3xeNN^4@10.0.0.6:6379/0'),
     CELERY_RESULT_BACKEND=(str, 'redis://:tzJ*cEscpUonRqAoVAQ9TNB%8KkGSD58%3xeNN^4@10.0.0.6:6379/1'),
@@ -211,6 +211,7 @@ USERNAME_FIELD = 'email'
 AWS_ACCESS_KEY_ID = env('S3_ACCESS_KEY_ID')
 AWS_SECRET_ACCESS_KEY = env('S3_SECRET_ACCESS_KEY')
 AWS_STORAGE_BUCKET_NAME = env('AWS_STORAGE_BUCKET_NAME')
+AWS_STORAGE_CDN_BUCKET_NAME = env('AWS_STORAGE_CDN_BUCKET_NAME')
 AWS_S3_REGION_NAME = env('AWS_S3_LOCATION')
 AWS_S3_CUSTOM_DOMAIN = env('AWS_S3_CUSTOM_DOMAIN')
 
@@ -224,7 +225,7 @@ STORAGES = {
             "secret_key": AWS_SECRET_ACCESS_KEY,
             "region_name": AWS_S3_REGION_NAME,
             "custom_domain": AWS_S3_CUSTOM_DOMAIN,
-            "default_acl": "public-read",
+            "default_acl": None,
             "file_overwrite": False,
             "location": "media",
         },
@@ -232,12 +233,12 @@ STORAGES = {
     "staticfiles": {  # For static files
         "BACKEND": "storages.backends.s3.S3Storage",
         "OPTIONS": {
-            "bucket_name": AWS_STORAGE_BUCKET_NAME,
+            "bucket_name": AWS_STORAGE_CDN_BUCKET_NAME,
             "access_key": AWS_ACCESS_KEY_ID,
             "secret_key": AWS_SECRET_ACCESS_KEY,
             "region_name": AWS_S3_REGION_NAME,
             "custom_domain": AWS_S3_CUSTOM_DOMAIN,
-            "default_acl": "public-read",
+            "default_acl": None,
             "file_overwrite": True,
             "location": "static",
         },
