@@ -341,5 +341,5 @@ EMAIL_BATCH_MAX_SIZE = 20  # max notifications per email
 
 # Asset Checker Service Configuration
 ASSET_CHECKER_API_URL = env('ASSET_CHECKER_API_URL', default='https://api.asset-checker.example.com')
-ASSET_CHECKER_API_KEY = env('ASSET_CHECKER_API_KEY', default='your-asset-checker-api-key')
+LAMBDA_AUTH_TOKEN = env('LAMBDA_AUTH_TOKEN')
 WEBHOOK_BASE_URL = env('WEBHOOK_BASE_URL', default='https://api.crops.is')

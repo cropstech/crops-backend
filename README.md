@@ -203,7 +203,7 @@ Add the following environment variables to your `.env` file:
 ```bash
 # Asset Checker Service Configuration
 ASSET_CHECKER_API_URL=https://your-asset-checker-lambda.amazonaws.com
-ASSET_CHECKER_API_KEY=your-api-key-here
+LAMBDA_AUTH_TOKEN=your-api-key-here
 WEBHOOK_BASE_URL=https://your-backend-domain.com
 ```
 

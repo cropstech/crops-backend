@@ -8,10 +8,15 @@ from main.models import (
     Asset,
     Board
 )
+from .asset_checker_service import AssetCheckerService, AnalysisRequest
+import logging
+
+logger = logging.getLogger(__name__)
 
 def trigger_ai_actions(field_value: CustomFieldValue) -> List[AIActionResult]:
     """
     Trigger AI actions for a field value if it has a single-select option with enabled AI actions.
+    Combines all actions into a single Lambda request for efficiency.
     Returns a list of created AIActionResult objects.
     """
     if not field_value.option_value:
@@ -22,9 +27,20 @@ def trigger_ai_actions(field_value: CustomFieldValue) -> List[AIActionResult]:
         is_enabled=True
     )
 
+    if not enabled_actions.exists():
+        return []
+
+    # Get the content object (Asset or Board)
+    content_object = field_value.content_object
+    
+    # Only process Assets for now
+    if not isinstance(content_object, Asset):
+        logger.warning(f"AssetChecker only supports Asset objects, got {type(content_object)}")
+        return []
+
+    # Create AIActionResult entries for all actions
     results = []
     for action_config in enabled_actions:
-        # Create a new result entry
         result = AIActionResult.objects.create(
             field_value=field_value,
             action=action_config.action,
@@ -32,12 +48,23 @@ def trigger_ai_actions(field_value: CustomFieldValue) -> List[AIActionResult]:
         )
         results.append(result)
 
+    # Process all actions in a single Lambda request
+    try:
+        process_combined_ai_actions(results)
+    except Exception as e:
+        logger.error(f"Failed to process combined AI actions: {str(e)}")
+        # Mark all results as failed
+        for result in results:
+            result.status = 'FAILED'
+            result.error_message = str(e)
+            result.completed_at = timezone.now()
+            result.save()
+
     return results
 
 def process_ai_action(result: AIActionResult) -> None:
     """
-    Process a single AI action result.
-    This is where you would implement the actual AI analysis logic.
+    Process a single AI action result using AssetCheckerService.
     """
     try:
         result.status = 'PROCESSING'
@@ -46,82 +73,262 @@ def process_ai_action(result: AIActionResult) -> None:
         # Get the content object (Asset or Board)
         content_object = result.field_value.content_object
         
+        # Only process Assets for now
+        if not isinstance(content_object, Asset):
+            raise ValueError(f"AssetChecker only supports Asset objects, got {type(content_object)}")
+        
         # Get the action configuration
         action_config = result.field_value.option_value.ai_action_configs.get(
             action=result.action
         )
 
-        # Get the action definition
-        action_def = action_config.get_definition()
+        # Build checks_enabled configuration based on action type and config
+        checks_enabled = _build_checks_enabled_config(result.action, action_config.configuration)
         
-        # Perform the analysis based on the action type
-        if result.action == 'spelling_grammar':
-            analysis_result = analyze_spelling_grammar(content_object, action_config.configuration)
-        elif result.action == 'color_contrast':
-            analysis_result = analyze_color_contrast(content_object, action_config.configuration)
-        elif result.action == 'image_quality':
-            analysis_result = analyze_image_quality(content_object, action_config.configuration)
-        elif result.action == 'image_artifacts':
-            analysis_result = analyze_image_artifacts(content_object, action_config.configuration)
-        else:
-            raise ValueError(f"Unknown action type: {result.action}")
-
-        # Update the result
-        result.result = analysis_result
-        result.status = 'COMPLETED'
-        result.completed_at = timezone.now()
+        # Get S3 info from asset
+        s3_bucket, s3_key = _get_asset_s3_info(content_object)
+        
+        # Start analysis with AssetCheckerService
+        service = AssetCheckerService()
+        
+        # Create analysis request
+        analysis_request = AnalysisRequest(
+            s3_bucket=s3_bucket,
+            s3_key=s3_key
+        )
+        
+        # Store the AIActionResult ID in the analysis request for later reference
+        response = service.start_analysis(
+            analysis_request, 
+            checks_enabled,
+            ai_action_result_id=result.id
+        )
+        
+        # Store the check_id in the result for tracking
+        result.result = {
+            'check_id': response.check_id,
+            'status': response.status,
+            'webhook_url': response.webhook_url,
+            'checks_enabled': checks_enabled
+        }
         result.save()
+        
+        logger.info(f"Started asset analysis {response.check_id} for AI action {result.id}")
 
     except Exception as e:
         result.status = 'FAILED'
         result.error_message = str(e)
         result.completed_at = timezone.now()
         result.save()
+        logger.error(f"Failed to process AI action {result.id}: {str(e)}")
         raise
 
-def analyze_spelling_grammar(content_object: Any, config: Dict) -> Dict:
+def _build_checks_enabled_config(action: str, config: Dict) -> Dict:
     """
-    Analyze spelling and grammar in text content.
-    This is a placeholder - implement actual analysis logic.
+    Build checks_enabled configuration based on action type and config.
     """
-    # TODO: Implement actual spelling and grammar analysis
-    return {
-        'issues': [],
-        'configuration_used': config
+    checks_enabled = {
+        "grammar": False,
+        "color_contrast": False,
+        "image_quality": False,
+        "color_blindness": False,
+        "text_accessibility": {
+            "color_contrast": False,
+            "color_blindness": False
+        },
+        "text_quality": {
+            "font_size_detection": False,
+            "text_overflow": False,
+            "mixed_fonts": False,
+            "placeholder_detection": False,
+            "repeated_text": False
+        }
     }
+    
+    # Enable checks based on action type
+    if action == 'spelling_grammar':
+        checks_enabled["grammar"] = True
+        # Enable text quality checks if specified in config
+        if config.get('text_quality'):
+            text_quality_config = config['text_quality']
+            checks_enabled["text_quality"].update(text_quality_config)
+    
+    elif action == 'color_contrast':
+        checks_enabled["color_contrast"] = True
+        checks_enabled["text_accessibility"]["color_contrast"] = True
+        if config.get('color_blindness', False):
+            checks_enabled["color_blindness"] = True
+            checks_enabled["text_accessibility"]["color_blindness"] = True
+    
+    elif action == 'image_quality':
+        checks_enabled["image_quality"] = True
+    
+    elif action == 'image_artifacts':
+        # Image artifacts might be part of image quality or a custom check
+        checks_enabled["image_quality"] = True
+    
+    return checks_enabled
 
-def analyze_color_contrast(content_object: Any, config: Dict) -> Dict:
+def _get_asset_s3_info(asset: Asset) -> tuple[str, str]:
     """
-    Analyze color contrast in images.
-    This is a placeholder - implement actual analysis logic.
+    Extract S3 bucket and key from asset.
+    Assets follow the pattern: /media/workspace/[workspace_id]/assets/[asset_id]/medium.jpg
     """
-    # TODO: Implement actual color contrast analysis
-    return {
-        'issues': [],
-        'configuration_used': config
-    }
+    if not asset.file:
+        raise ValueError(f"Asset {asset.id} has no file")
+    
+    from django.conf import settings
+    
+    # Get bucket from settings
+    bucket = getattr(settings, 'AWS_STORAGE_CDN_BUCKET_NAME', 'crops-test')
+    
+    # Construct S3 key based on the pattern
+    # /media/workspace/[workspace_id]/assets/[asset_id]/medium.jpg
+    s3_key = f"media/workspaces/{asset.workspace.id}/assets/{asset.id}/medium.jpg"
+    
+    return bucket, s3_key
 
-def analyze_image_quality(content_object: Any, config: Dict) -> Dict:
+def process_asset_checker_webhook_result(check_id: str, results: Dict) -> None:
     """
-    Analyze image quality.
-    This is a placeholder - implement actual analysis logic.
+    Process webhook results from AssetCheckerService and create comments.
     """
-    # TODO: Implement actual image quality analysis
-    return {
-        'issues': [],
-        'configuration_used': config
-    }
+    try:
+        # Find the AIActionResult that has this check_id in its result
+        ai_results = AIActionResult.objects.filter(
+            result__check_id=check_id,
+            status='PROCESSING'
+        )
+        
+        for ai_result in ai_results:
+            try:
+                # Update the AI action result
+                ai_result.result.update({
+                    'analysis_results': results,
+                    'completed_at': timezone.now().isoformat()
+                })
+                ai_result.status = 'COMPLETED'
+                ai_result.completed_at = timezone.now()
+                ai_result.save()
+                
+                # Create comments on the asset based on the results
+                _create_asset_comments(ai_result, results)
+                
+                logger.info(f"Processed webhook result for AI action {ai_result.id}")
+                
+            except Exception as e:
+                ai_result.status = 'FAILED'
+                ai_result.error_message = str(e)
+                ai_result.completed_at = timezone.now()
+                ai_result.save()
+                logger.error(f"Failed to process webhook result for AI action {ai_result.id}: {str(e)}")
+                
+    except Exception as e:
+        logger.error(f"Failed to process webhook result for check_id {check_id}: {str(e)}")
 
-def analyze_image_artifacts(content_object: Any, config: Dict) -> Dict:
+def _create_asset_comments(ai_result: AIActionResult, results: Dict) -> None:
     """
-    Analyze image for artifacts.
-    This is a placeholder - implement actual analysis logic.
+    Create comments on the asset based on analysis results.
     """
-    # TODO: Implement actual artifact analysis
-    return {
-        'issues': [],
-        'configuration_used': config
-    }
+    try:
+        content_object = ai_result.field_value.content_object
+        if not isinstance(content_object, Asset):
+            return
+        
+        # Extract issues from results based on action type
+        issues = _extract_issues_from_results(ai_result.action, results)
+        
+        if issues:
+            # Create a comment with the issues found
+            from main.models import Comment
+            
+            comment_text = f"AI Analysis ({ai_result.get_action_display()}) found {len(issues)} issue(s):\n\n"
+            for i, issue in enumerate(issues[:5], 1):  # Limit to first 5 issues
+                comment_text += f"{i}. {issue}\n"
+            
+            if len(issues) > 5:
+                comment_text += f"\n... and {len(issues) - 5} more issues."
+            
+            Comment.objects.create(
+                content_object=content_object,
+                author=None,  # System comment
+                text=comment_text,
+                comment_type='AI_ANALYSIS'
+            )
+            
+            logger.info(f"Created comment with {len(issues)} issues for asset {content_object.id}")
+        
+    except Exception as e:
+        logger.error(f"Failed to create asset comments: {str(e)}")
+
+def _extract_issues_from_results(action: str, results: Dict) -> List[str]:
+    """
+    Extract issues from analysis results based on action type.
+    New Lambda API returns results under 'data' with 'individual_checks' array.
+    """
+    issues = []
+    
+    try:
+        # Extract from new Lambda response format
+        data = results.get('data', {})
+        individual_checks = data.get('individual_checks', [])
+        
+        # Parse results based on action type
+        if action == 'spelling_grammar':
+            for check in individual_checks:
+                if check.get('check_type') == 'grammar':
+                    grammar_result = check.get('grammar_result', {})
+                    grammar_issues = grammar_result.get('issues', [])
+                    issues.extend([f"Grammar: {issue}" for issue in grammar_issues])
+                
+                # Check for text quality issues
+                text_quality_result = check.get('text_quality_result', {})
+                if text_quality_result.get('issues'):
+                    for issue in text_quality_result['issues']:
+                        issue_type = issue.get('type', 'text quality')
+                        message = issue.get('message', str(issue))
+                        issues.append(f"Text Quality ({issue_type}): {message}")
+        
+        elif action == 'color_contrast':
+            for check in individual_checks:
+                if check.get('check_type') == 'text_accessibility':
+                    body = check.get('body', {})
+                    accessibility_issues = body.get('issues', [])
+                    for issue in accessibility_issues:
+                        if issue.get('type') == 'color_contrast':
+                            message = issue.get('message', str(issue))
+                            issues.append(f"Color Contrast: {message}")
+                        elif issue.get('type') == 'color_blindness':
+                            subtype = issue.get('subtype', 'color blindness')
+                            message = issue.get('message', str(issue))
+                            issues.append(f"Color Blindness ({subtype}): {message}")
+        
+        elif action == 'image_quality':
+            for check in individual_checks:
+                if check.get('check_type') == 'image_quality':
+                    image_result = check.get('image_quality_result', {})
+                    quality_issues = image_result.get('issues', [])
+                    issues.extend([f"Image Quality: {issue}" for issue in quality_issues])
+                    
+                    # Also check recommendations if no issues
+                    if not quality_issues:
+                        recommendations = image_result.get('recommendations', [])
+                        issues.extend([f"Image Quality Recommendation: {rec}" for rec in recommendations[:3]])  # Limit to 3
+        
+        elif action == 'image_artifacts':
+            # Image artifacts would typically be in image_quality check
+            for check in individual_checks:
+                if check.get('check_type') == 'image_quality':
+                    image_result = check.get('image_quality_result', {})
+                    # Look for artifact-related issues in metrics or issues
+                    metrics = image_result.get('metrics', {})
+                    if metrics.get('blur_score', 100) < 70:  # Low blur score indicates artifacts
+                        issues.append(f"Image Artifacts: Low image sharpness detected (score: {metrics.get('blur_score', 'unknown')})")
+    
+    except Exception as e:
+        logger.error(f"Failed to extract issues from results: {str(e)}")
+        issues.append(f"Error parsing results: {str(e)}")
+    
+    return issues
 
 def get_ai_action_results(content_object: Any) -> Dict[str, List[Dict]]:
     """

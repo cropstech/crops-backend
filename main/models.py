@@ -847,8 +847,9 @@ class Comment(models.Model):
     object_id = models.UUIDField()
     content_object = GenericForeignKey('content_type', 'object_id')
     
-    author = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='comments')
+    author = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='comments', null=True, blank=True)
     text = models.TextField()
+    comment_type = models.CharField(max_length=50, default='USER', help_text="Type of comment (USER, AI_ANALYSIS, SYSTEM, etc.)")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     
@@ -1183,6 +1184,7 @@ class AssetCheckerAnalysis(models.Model):
     use_webhook = models.BooleanField(default=True)
     webhook_url = models.URLField(null=True, blank=True)
     callback_url = models.URLField(null=True, blank=True)
+    ai_action_result_id = models.IntegerField(null=True, blank=True, help_text="ID of the AIActionResult that triggered this analysis")
     
     created_at = models.DateTimeField(auto_now_add=True)
     completed_at = models.DateTimeField(null=True, blank=True)
