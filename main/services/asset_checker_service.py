@@ -8,7 +8,7 @@ webhook callbacks and manual polling for asset analysis.
 import json
 import uuid
 import logging
-from typing import Dict, Optional, Any
+from typing import Dict, Optional, Any, List
 from dataclasses import dataclass
 from django.conf import settings
 from django.utils import timezone
@@ -129,14 +129,14 @@ class AssetCheckerService:
             logger.error(f"Failed to get analysis results for {check_id}: {str(e)}")
             raise
     
-    def start_analysis(self, request: AnalysisRequest, checks_enabled: Dict[str, Any], ai_action_result_id: Optional[int] = None) -> AnalysisResponse:
+    def start_analysis(self, request: AnalysisRequest, checks_enabled: Dict[str, Any], ai_action_result_ids: List[int]) -> AnalysisResponse:
         """
         Start asset analysis with checks_enabled format (used by AI actions)
         
         Args:
             request: Analysis request configuration
             checks_enabled: Dictionary with enabled checks in Lambda format
-            ai_action_result_id: Optional ID to link back to AIActionResult
+            ai_action_result_ids: List of AIActionResult IDs to link back to
             
         Returns:
             AnalysisResponse with check_id and URLs
@@ -186,7 +186,7 @@ class AssetCheckerService:
                 s3_key=request.s3_key,
                 use_webhook=True,
                 webhook_url=webhook_url,
-                ai_action_result_id=ai_action_result_id
+                ai_action_result_id=ai_action_result_ids[0] if ai_action_result_ids else None
             )
             
             logger.info(f"Started asset analysis {returned_check_id} for {request.s3_bucket}/{request.s3_key} with checks_enabled")
@@ -209,7 +209,7 @@ class AssetCheckerService:
                 s3_key=request.s3_key,
                 error_message=str(e),
                 use_webhook=True,
-                ai_action_result_id=ai_action_result_id
+                ai_action_result_id=ai_action_result_ids[0] if ai_action_result_ids else None
             )
             raise
     

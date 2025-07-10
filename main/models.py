@@ -537,10 +537,14 @@ class AssetAnalysis(models.Model):
         verbose_name_plural = "Asset analyses"
 
 class AIActionChoices(models.TextChoices):
-    SPELLING_GRAMMAR = 'spelling_grammar', 'Spelling and Grammar Check'
-    COLOR_CONTRAST = 'color_contrast', 'Color Contrast Analysis'
+    GRAMMAR = 'grammar', 'Grammar Check'
     IMAGE_QUALITY = 'image_quality', 'Image Quality Check'
-    IMAGE_ARTIFACTS = 'image_artifacts', 'Image Artifacts Detection'
+    COLOR_CONTRAST = 'color_contrast', 'Color Contrast Analysis'
+    COLOR_BLINDNESS = 'color_blindness', 'Color Blindness Analysis'
+    FONT_SIZE_DETECTION = 'font_size_detection', 'Font Size Detection'
+    TEXT_OVERFLOW = 'text_overflow', 'Text Overflow Detection'
+    PLACEHOLDER_DETECTION = 'placeholder_detection', 'Placeholder Text Detection'
+    REPEATED_TEXT = 'repeated_text', 'Repeated Text Detection'
 
 class AIActionDefinition:
     """
@@ -548,21 +552,103 @@ class AIActionDefinition:
     This class acts as a registry of all available AI actions.
     """
     
+    # Full language metadata for grammar checking
+    LANGUAGE_METADATA = [
+        {"name": "German", "code": "de", "longCode": "de"},
+        {"name": "German (Germany)", "code": "de", "longCode": "de-DE"},
+        {"name": "German (Austria)", "code": "de", "longCode": "de-AT"},
+        {"name": "German (Swiss)", "code": "de", "longCode": "de-CH"},
+        {"name": "English", "code": "en", "longCode": "en"},
+        {"name": "English (US)", "code": "en", "longCode": "en-US"},
+        {"name": "English (Australian)", "code": "en", "longCode": "en-AU"},
+        {"name": "English (GB)", "code": "en", "longCode": "en-GB"},
+        {"name": "English (Canadian)", "code": "en", "longCode": "en-CA"},
+        {"name": "English (New Zealand)", "code": "en", "longCode": "en-NZ"},
+        {"name": "English (South African)", "code": "en", "longCode": "en-ZA"},
+        {"name": "Spanish", "code": "es", "longCode": "es"},
+        {"name": "Spanish (voseo)", "code": "es", "longCode": "es-AR"},
+        {"name": "French", "code": "fr", "longCode": "fr"},
+        {"name": "French (Canada)", "code": "fr", "longCode": "fr-CA"},
+        {"name": "French (Switzerland)", "code": "fr", "longCode": "fr-CH"},
+        {"name": "French (Belgium)", "code": "fr", "longCode": "fr-BE"},
+        {"name": "Dutch", "code": "nl", "longCode": "nl"},
+        {"name": "Dutch (Belgium)", "code": "nl", "longCode": "nl-BE"},
+        {"name": "Portuguese (Angola preAO)", "code": "pt", "longCode": "pt-AO"},
+        {"name": "Portuguese (Brazil)", "code": "pt", "longCode": "pt-BR"},
+        {"name": "Portuguese (Moçambique preAO)", "code": "pt", "longCode": "pt-MZ"},
+        {"name": "Portuguese (Portugal)", "code": "pt", "longCode": "pt-PT"},
+        {"name": "Portuguese", "code": "pt", "longCode": "pt"},
+        {"name": "Arabic", "code": "ar", "longCode": "ar"},
+        {"name": "Asturian", "code": "ast", "longCode": "ast-ES"},
+        {"name": "Belarusian", "code": "be", "longCode": "be-BY"},
+        {"name": "Breton", "code": "br", "longCode": "br-FR"},
+        {"name": "Catalan", "code": "ca", "longCode": "ca-ES"},
+        {"name": "Catalan (Valencian)", "code": "ca", "longCode": "ca-ES-valencia"},
+        {"name": "Catalan (Balearic)", "code": "ca", "longCode": "ca-ES-balear"},
+        {"name": "Danish", "code": "da", "longCode": "da-DK"},
+        {"name": "Simple German", "code": "de-DE-x-simple-language", "longCode": "de-DE-x-simple-language"},
+        {"name": "Greek", "code": "el", "longCode": "el-GR"},
+        {"name": "Esperanto", "code": "eo", "longCode": "eo"},
+        {"name": "Persian", "code": "fa", "longCode": "fa"},
+        {"name": "Irish", "code": "ga", "longCode": "ga-IE"},
+        {"name": "Galician", "code": "gl", "longCode": "gl-ES"},
+        {"name": "Italian", "code": "it", "longCode": "it"},
+        {"name": "Japanese", "code": "ja", "longCode": "ja-JP"},
+        {"name": "Khmer", "code": "km", "longCode": "km-KH"},
+        {"name": "Polish", "code": "pl", "longCode": "pl-PL"},
+        {"name": "Romanian", "code": "ro", "longCode": "ro-RO"},
+        {"name": "Russian", "code": "ru", "longCode": "ru-RU"},
+        {"name": "Slovak", "code": "sk", "longCode": "sk-SK"},
+        {"name": "Slovenian", "code": "sl", "longCode": "sl-SI"},
+        {"name": "Swedish", "code": "sv", "longCode": "sv"},
+        {"name": "Tamil", "code": "ta", "longCode": "ta-IN"},
+        {"name": "Tagalog", "code": "tl", "longCode": "tl-PH"},
+        {"name": "Ukrainian", "code": "uk", "longCode": "uk-UA"},
+        {"name": "Chinese", "code": "zh", "longCode": "zh-CN"},
+        {"name": "Crimean Tatar", "code": "crh", "longCode": "crh-UA"},
+        {"name": "Norwegian (Bokmål)", "code": "nb", "longCode": "nb"},
+        {"name": "Norwegian (Bokmål)", "code": "no", "longCode": "no"},
+        {"name": "Dutch", "code": "nl", "longCode": "nl-NL"},
+        {"name": "Simple German", "code": "de-DE-x-simple-language", "longCode": "de-DE-x-simple-language-DE"},
+        {"name": "Spanish", "code": "es", "longCode": "es-ES"},
+        {"name": "Italian", "code": "it", "longCode": "it-IT"},
+        {"name": "Persian", "code": "fa", "longCode": "fa-IR"},
+        {"name": "Swedish", "code": "sv", "longCode": "sv-SE"},
+        {"name": "German", "code": "de", "longCode": "de-LU"},
+        {"name": "French", "code": "fr", "longCode": "fr-FR"}
+    ]
+    
     DEFINITIONS = {
-        AIActionChoices.SPELLING_GRAMMAR: {
-            'description': 'Checks for spelling and grammar errors in visible text',
+        AIActionChoices.GRAMMAR: {
+            'description': 'Checks for grammar errors in visible text',
             'supported_asset_types': ['DOCUMENT', 'IMAGE'],
             'configuration_schema': {
                 'properties': {
                     'language': {
                         'type': 'string',
-                        'enum': ['en', 'es', 'fr']
-                    },
-                    'check_spelling': {
-                        'type': 'boolean',
-                        'default': True
-                    },
-                    'check_grammar': {
+                        'enum': [
+                            'ar', 'ast-ES', 'be-BY', 'br-FR', 'ca-ES', 'ca-ES-valencia', 'ca-ES-balear',
+                            'crh-UA', 'da-DK', 'de', 'de-DE', 'de-AT', 'de-CH', 'de-LU', 
+                            'de-DE-x-simple-language', 'de-DE-x-simple-language-DE', 'el-GR', 'en', 
+                            'en-US', 'en-AU', 'en-GB', 'en-CA', 'en-NZ', 'en-ZA', 'eo', 'es', 
+                            'es-AR', 'es-ES', 'fa', 'fa-IR', 'fr', 'fr-CA', 'fr-CH', 'fr-BE', 
+                            'fr-FR', 'ga-IE', 'gl-ES', 'it', 'it-IT', 'ja-JP', 'km-KH', 'nb', 
+                            'nl', 'nl-BE', 'nl-NL', 'no', 'pl-PL', 'pt', 'pt-AO', 'pt-BR', 
+                            'pt-MZ', 'pt-PT', 'ro-RO', 'ru-RU', 'sk-SK', 'sl-SI', 'sv', 'sv-SE', 
+                            'ta-IN', 'tl-PH', 'uk-UA', 'zh-CN'
+                        ],
+                        'default': 'en-US',
+                        'description': 'Language code for grammar checking. Use AIActionDefinition.get_language_choices() for full language metadata.'
+                    }
+                }
+            }
+        },
+        AIActionChoices.IMAGE_QUALITY: {
+            'description': 'Checks for resolution and image quality problems',
+            'supported_asset_types': ['IMAGE'],
+            'configuration_schema': {
+                'properties': {
+                    'enabled': {
                         'type': 'boolean',
                         'default': True
                     }
@@ -574,39 +660,69 @@ class AIActionDefinition:
             'supported_asset_types': ['IMAGE'],
             'configuration_schema': {
                 'properties': {
-                    'wcag_level': {
-                        'type': 'string',
-                        'enum': ['AA', 'AAA'],
-                        'default': 'AA'
-                    }
-                }
-            }
-        },
-        AIActionChoices.IMAGE_QUALITY: {
-            'description': 'Checks for resolution and image quality problems',
-            'supported_asset_types': ['IMAGE'],
-            'configuration_schema': {
-                'properties': {
-                    'min_resolution': {
-                        'type': 'integer',
-                        'default': 1920
-                    },
-                    'check_compression': {
+                    'enabled': {
                         'type': 'boolean',
                         'default': True
                     }
                 }
             }
         },
-        AIActionChoices.IMAGE_ARTIFACTS: {
-            'description': 'Detects pixelation, blurriness, or compression artifacts',
+        AIActionChoices.COLOR_BLINDNESS: {
+            'description': 'Analyzes content for color blindness accessibility',
             'supported_asset_types': ['IMAGE'],
             'configuration_schema': {
                 'properties': {
-                    'sensitivity': {
-                        'type': 'string',
-                        'enum': ['low', 'medium', 'high'],
-                        'default': 'medium'
+                    'enabled': {
+                        'type': 'boolean',
+                        'default': True
+                    }
+                }
+            }
+        },
+        AIActionChoices.FONT_SIZE_DETECTION: {
+            'description': 'Detects and analyzes font sizes in text',
+            'supported_asset_types': ['IMAGE', 'DOCUMENT'],
+            'configuration_schema': {
+                'properties': {
+                    'enabled': {
+                        'type': 'boolean',
+                        'default': True
+                    }
+                }
+            }
+        },
+        AIActionChoices.TEXT_OVERFLOW: {
+            'description': 'Detects text that overflows its container',
+            'supported_asset_types': ['IMAGE', 'DOCUMENT'],
+            'configuration_schema': {
+                'properties': {
+                    'enabled': {
+                        'type': 'boolean',
+                        'default': True
+                    }
+                }
+            }
+        },
+        AIActionChoices.PLACEHOLDER_DETECTION: {
+            'description': 'Detects placeholder text that should be replaced',
+            'supported_asset_types': ['IMAGE', 'DOCUMENT'],
+            'configuration_schema': {
+                'properties': {
+                    'enabled': {
+                        'type': 'boolean',
+                        'default': True
+                    }
+                }
+            }
+        },
+        AIActionChoices.REPEATED_TEXT: {
+            'description': 'Detects repeated or duplicated text content',
+            'supported_asset_types': ['IMAGE', 'DOCUMENT'],
+            'configuration_schema': {
+                'properties': {
+                    'enabled': {
+                        'type': 'boolean',
+                        'default': True
                     }
                 }
             }
@@ -628,6 +744,19 @@ class AIActionDefinition:
             action_id for action_id, definition in cls.DEFINITIONS.items()
             if asset_type in definition['supported_asset_types']
         ]
+
+    @classmethod
+    def get_language_choices(cls):
+        """Get all available language choices for grammar checking"""
+        return cls.LANGUAGE_METADATA
+
+    @classmethod
+    def get_language_by_code(cls, code):
+        """Get language metadata by longCode"""
+        for lang in cls.LANGUAGE_METADATA:
+            if lang['longCode'] == code:
+                return lang
+        return None
 
 class CustomField(models.Model):
     FIELD_TYPES = [

@@ -86,7 +86,7 @@ class WebhookValidationResult:
 class WebhookValidator:
     """Validator for incoming webhook payloads"""
     
-    VALID_STATUSES = {'pending', 'processing', 'completed', 'failed'}
+    VALID_STATUSES = {'pending', 'processing', 'completed', 'failed', 'no_checks_enabled'}
     
     @classmethod
     def validate_payload(cls, data: Dict[str, Any]) -> WebhookValidationResult:
@@ -182,44 +182,73 @@ class WebhookValidator:
 
 
 class ChecksConfigBuilder:
-    """Builder for creating analysis configuration"""
+    """Builder for creating analysis configuration matching the new lambda API"""
     
     def __init__(self):
-        self.config = {}
-    
-    def spelling_grammar(self, language: str = 'en', check_spelling: bool = True, check_grammar: bool = True):
-        """Add spelling and grammar check"""
-        self.config['spelling_grammar'] = {
-            'language': language,
-            'check_spelling': check_spelling,
-            'check_grammar': check_grammar
+        self.config = {
+            "grammar": False,
+            "language": "en-US",
+            "image_quality": False,
+            "text_accessibility": {
+                "color_contrast": False,
+                "color_blindness": False
+            },
+            "text_quality": {
+                "font_size_detection": False,
+                "text_overflow": False,
+                "placeholder_detection": False,
+                "repeated_text": False
+            }
         }
+    
+    def grammar(self, enabled: bool = True, language: str = 'en-US'):
+        """Enable grammar check"""
+        self.config['grammar'] = enabled
+        self.config['language'] = language
         return self
     
-    def color_contrast(self, wcag_level: str = 'AA'):
-        """Add color contrast check"""
-        self.config['color_contrast'] = {
-            'wcag_level': wcag_level
-        }
+    def image_quality(self, enabled: bool = True):
+        """Enable image quality check"""
+        self.config['image_quality'] = enabled
         return self
     
-    def image_quality(self, min_resolution: int = 1920, check_compression: bool = True):
-        """Add image quality check"""
-        self.config['image_quality'] = {
-            'min_resolution': min_resolution,
-            'check_compression': check_compression
-        }
+    def color_contrast(self, enabled: bool = True):
+        """Enable color contrast check"""
+        self.config['text_accessibility']['color_contrast'] = enabled
         return self
     
-    def image_artifacts(self, sensitivity: str = 'medium'):
-        """Add image artifacts check"""
-        self.config['image_artifacts'] = {
-            'sensitivity': sensitivity
-        }
+    def color_blindness(self, enabled: bool = True):
+        """Enable color blindness check"""
+        self.config['text_accessibility']['color_blindness'] = enabled
+        return self
+    
+    def font_size_detection(self, enabled: bool = True):
+        """Enable font size detection"""
+        self.config['text_quality']['font_size_detection'] = enabled
+        return self
+    
+    def text_overflow(self, enabled: bool = True):
+        """Enable text overflow detection"""
+        self.config['text_quality']['text_overflow'] = enabled
+        return self
+    
+    def mixed_fonts(self, enabled: bool = True):
+        """Enable mixed fonts detection"""
+        self.config['text_quality']['mixed_fonts'] = enabled
+        return self
+    
+    def placeholder_detection(self, enabled: bool = True):
+        """Enable placeholder text detection"""
+        self.config['text_quality']['placeholder_detection'] = enabled
+        return self
+    
+    def repeated_text(self, enabled: bool = True):
+        """Enable repeated text detection"""
+        self.config['text_quality']['repeated_text'] = enabled
         return self
     
     def custom_check(self, check_type: str, config: Dict[str, Any]):
-        """Add custom check"""
+        """Add custom check (for future extensibility)"""
         if 'custom_checks' not in self.config:
             self.config['custom_checks'] = []
         

@@ -62,6 +62,58 @@ def trigger_ai_actions(field_value: CustomFieldValue) -> List[AIActionResult]:
 
     return results
 
+def process_combined_ai_actions(results: List[AIActionResult]) -> None:
+    """
+    Process multiple AI actions in a single Lambda request for efficiency.
+    """
+    if not results:
+        return
+
+    # All results should be for the same field_value and asset
+    first_result = results[0]
+    content_object = first_result.field_value.content_object
+    
+    # Mark all results as processing
+    for result in results:
+        result.status = 'PROCESSING'
+        result.save()
+
+    # Get S3 info from asset
+    s3_bucket, s3_key = _get_asset_s3_info(content_object)
+    
+    # Build combined checks_enabled configuration
+    checks_enabled = _build_combined_checks_enabled_config(results)
+    
+    # Start analysis with AssetCheckerService
+    service = AssetCheckerService()
+    
+    # Create analysis request
+    analysis_request = AnalysisRequest(
+        s3_bucket=s3_bucket,
+        s3_key=s3_key
+    )
+    
+    # Store all AIActionResult IDs for later reference
+    ai_action_result_ids = [result.id for result in results]
+    
+    response = service.start_analysis(
+        analysis_request, 
+        checks_enabled,
+        ai_action_result_ids=ai_action_result_ids  # Pass list of IDs
+    )
+    
+    # Store the check_id in all results for tracking
+    for result in results:
+        result.result = {
+            'check_id': response.check_id,
+            'status': response.status,
+            'webhook_url': response.webhook_url,
+            'checks_enabled': checks_enabled
+        }
+        result.save()
+    
+    logger.info(f"Started combined asset analysis {response.check_id} for {len(results)} AI actions")
+
 def process_ai_action(result: AIActionResult) -> None:
     """
     Process a single AI action result using AssetCheckerService.
@@ -123,6 +175,65 @@ def process_ai_action(result: AIActionResult) -> None:
         logger.error(f"Failed to process AI action {result.id}: {str(e)}")
         raise
 
+def _build_combined_checks_enabled_config(results: List[AIActionResult]) -> Dict:
+    """
+    Build combined checks_enabled configuration for multiple AI actions.
+    """
+    checks_enabled = {
+        "grammar": False,
+        "color_contrast": False,
+        "image_quality": False,
+        "color_blindness": False,
+        "text_accessibility": {
+            "color_contrast": False,
+            "color_blindness": False
+        },
+        "text_quality": {
+            "font_size_detection": False,
+            "text_overflow": False,
+            "mixed_fonts": False,
+            "placeholder_detection": False,
+            "repeated_text": False
+        }
+    }
+    
+    # Process each AI action result
+    for result in results:
+        action = result.action
+        action_config = result.field_value.option_value.ai_action_configs.get(action=action)
+        config = action_config.configuration or {}
+        
+        # Enable checks based on action type
+        if action == 'grammar':
+            checks_enabled["grammar"] = True
+            checks_enabled["language"] = config.get('language', 'en-US')
+        
+        elif action == 'color_contrast':
+            checks_enabled["text_accessibility"]["color_contrast"] = True
+        
+        elif action == 'color_blindness':
+            checks_enabled["text_accessibility"]["color_blindness"] = True
+        
+        elif action == 'image_quality':
+            checks_enabled["image_quality"] = True
+        
+        elif action == 'font_size_detection':
+            checks_enabled["text_quality"]["font_size_detection"] = True
+        
+        elif action == 'text_overflow':
+            checks_enabled["text_quality"]["text_overflow"] = True
+        
+        elif action == 'mixed_fonts':
+            checks_enabled["text_quality"]["mixed_fonts"] = True
+        
+        elif action == 'placeholder_detection':
+            checks_enabled["text_quality"]["placeholder_detection"] = True
+        
+        elif action == 'repeated_text':
+            checks_enabled["text_quality"]["repeated_text"] = True
+    
+    return checks_enabled
+
 def _build_checks_enabled_config(action: str, config: Dict) -> Dict:
     """
     Build checks_enabled configuration based on action type and config.
@@ -146,26 +257,33 @@ def _build_checks_enabled_config(action: str, config: Dict) -> Dict:
     }
     
     # Enable checks based on action type
-    if action == 'spelling_grammar':
+    if action == 'grammar':
         checks_enabled["grammar"] = True
-        # Enable text quality checks if specified in config
-        if config.get('text_quality'):
-            text_quality_config = config['text_quality']
-            checks_enabled["text_quality"].update(text_quality_config)
+        checks_enabled["language"] = config.get('language', 'en-US')
     
     elif action == 'color_contrast':
-        checks_enabled["color_contrast"] = True
         checks_enabled["text_accessibility"]["color_contrast"] = True
-        if config.get('color_blindness', False):
-            checks_enabled["color_blindness"] = True
-            checks_enabled["text_accessibility"]["color_blindness"] = True
+    
+    elif action == 'color_blindness':
+        checks_enabled["text_accessibility"]["color_blindness"] = True
     
     elif action == 'image_quality':
         checks_enabled["image_quality"] = True
     
-    elif action == 'image_artifacts':
-        # Image artifacts might be part of image quality or a custom check
-        checks_enabled["image_quality"] = True
+    elif action == 'font_size_detection':
+        checks_enabled["text_quality"]["font_size_detection"] = True
+    
+    elif action == 'text_overflow':
+        checks_enabled["text_quality"]["text_overflow"] = True
+    
+    elif action == 'mixed_fonts':
+        checks_enabled["text_quality"]["mixed_fonts"] = True
+    
+    elif action == 'placeholder_detection':
+        checks_enabled["text_quality"]["placeholder_detection"] = True
+    
+    elif action == 'repeated_text':
+        checks_enabled["text_quality"]["repeated_text"] = True
     
     return checks_enabled
 
@@ -273,20 +391,12 @@ def _extract_issues_from_results(action: str, results: Dict) -> List[str]:
         individual_checks = data.get('individual_checks', [])
         
         # Parse results based on action type
-        if action == 'spelling_grammar':
+        if action == 'grammar':
             for check in individual_checks:
                 if check.get('check_type') == 'grammar':
                     grammar_result = check.get('grammar_result', {})
                     grammar_issues = grammar_result.get('issues', [])
                     issues.extend([f"Grammar: {issue}" for issue in grammar_issues])
-                
-                # Check for text quality issues
-                text_quality_result = check.get('text_quality_result', {})
-                if text_quality_result.get('issues'):
-                    for issue in text_quality_result['issues']:
-                        issue_type = issue.get('type', 'text quality')
-                        message = issue.get('message', str(issue))
-                        issues.append(f"Text Quality ({issue_type}): {message}")
         
         elif action == 'color_contrast':
             for check in individual_checks:
@@ -297,7 +407,14 @@ def _extract_issues_from_results(action: str, results: Dict) -> List[str]:
                         if issue.get('type') == 'color_contrast':
                             message = issue.get('message', str(issue))
                             issues.append(f"Color Contrast: {message}")
-                        elif issue.get('type') == 'color_blindness':
+        
+        elif action == 'color_blindness':
+            for check in individual_checks:
+                if check.get('check_type') == 'text_accessibility':
+                    body = check.get('body', {})
+                    accessibility_issues = body.get('issues', [])
+                    for issue in accessibility_issues:
+                        if issue.get('type') == 'color_blindness':
                             subtype = issue.get('subtype', 'color blindness')
                             message = issue.get('message', str(issue))
                             issues.append(f"Color Blindness ({subtype}): {message}")
@@ -314,15 +431,17 @@ def _extract_issues_from_results(action: str, results: Dict) -> List[str]:
                         recommendations = image_result.get('recommendations', [])
                         issues.extend([f"Image Quality Recommendation: {rec}" for rec in recommendations[:3]])  # Limit to 3
         
-        elif action == 'image_artifacts':
-            # Image artifacts would typically be in image_quality check
+        # Text quality checks
+        elif action in ['font_size_detection', 'text_overflow', 'mixed_fonts', 'placeholder_detection', 'repeated_text']:
             for check in individual_checks:
-                if check.get('check_type') == 'image_quality':
-                    image_result = check.get('image_quality_result', {})
-                    # Look for artifact-related issues in metrics or issues
-                    metrics = image_result.get('metrics', {})
-                    if metrics.get('blur_score', 100) < 70:  # Low blur score indicates artifacts
-                        issues.append(f"Image Artifacts: Low image sharpness detected (score: {metrics.get('blur_score', 'unknown')})")
+                if check.get('check_type') == 'text_quality':
+                    text_quality_result = check.get('text_quality_result', {})
+                    quality_issues = text_quality_result.get('issues', [])
+                    for issue in quality_issues:
+                        issue_type = issue.get('type', 'text quality')
+                        if issue_type == action:  # Only show issues for this specific action
+                            message = issue.get('message', str(issue))
+                            issues.append(f"Text Quality ({issue_type}): {message}")
     
     except Exception as e:
         logger.error(f"Failed to extract issues from results: {str(e)}")

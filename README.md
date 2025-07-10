@@ -219,20 +219,18 @@ POST /api/v1/workspaces/{workspace_id}/assets/{asset_id}/analysis/start
 {
   "asset_id": "uuid-here",
   "checks_config": {
-    "spelling_grammar": {
-      "language": "en",
-      "check_spelling": true,
-      "check_grammar": true
+    "grammar": true,
+    "language": "en-US",
+    "image_quality": true,
+    "text_accessibility": {
+      "color_contrast": true,
+      "color_blindness": false
     },
-    "color_contrast": {
-      "wcag_level": "AA"
-    },
-    "image_quality": {
-      "min_resolution": 1920,
-      "check_compression": true
-    },
-    "image_artifacts": {
-      "sensitivity": "medium"
+    "text_quality": {
+            "font_size_detection": true,
+      "text_overflow": true,
+      "placeholder_detection": true,
+      "repeated_text": false
     }
   },
   "use_webhook": true,
@@ -302,8 +300,11 @@ GET /webhooks/assets/results/{check_id}
      -H "Content-Type: application/json" \
      -d '{
        "checks_config": {
-         "spelling_grammar": {"language": "en"},
-         "color_contrast": {"wcag_level": "AA"}
+         "grammar": true,
+         "language": "en-US",
+         "text_accessibility": {
+           "color_contrast": true
+         }
        }
      }'
    ```

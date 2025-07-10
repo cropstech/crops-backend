@@ -219,6 +219,7 @@ def asset_checker_webhook(request, check_id: str):
             raise HttpError(400, "Invalid JSON in request body")
 
         logger.info(f"Received asset checker webhook for check_id: {check_id}")
+        logger.info(f"Full webhook payload: {json.dumps(body, indent=2)}")
         
         # Validate webhook payload
         validation_result = WebhookValidator.validate_payload(body)

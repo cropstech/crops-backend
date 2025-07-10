@@ -462,18 +462,16 @@ class FieldOptionAIAction(Schema):
     
     Example:
         {
-            "action": "spelling_grammar",
+            "action": "grammar",
             "is_enabled": true,
             "configuration": {
-                "language": "en",
-                "check_spelling": true,
-                "check_grammar": true
+                "language": "en-US"
             }
         }
     """
     action: str = Field(
         ...,
-        description="The type of AI action. Available actions: spelling_grammar, color_contrast, image_quality, image_artifacts"
+        description="The type of AI action. Available actions: grammar, color_contrast, color_blindness, image_quality, font_size_detection, text_overflow, mixed_fonts, placeholder_detection, repeated_text"
     )
     is_enabled: bool = Field(
         default=True,
@@ -496,11 +494,10 @@ class FieldOption(Schema):
             "order": 1,
             "ai_actions": [
                 {
-                    "action": "spelling_grammar",
+                    "action": "grammar",
                     "is_enabled": true,
                     "configuration": {
-                        "language": "en",
-                        "check_spelling": true
+                        "language": "en-US"
                     }
                 }
             ],
@@ -549,11 +546,10 @@ class FieldConfiguration(Schema):
                     "order": 1,
                     "ai_actions": [
                         {
-                            "action": "spelling_grammar",
+                            "action": "grammar",
                             "is_enabled": true,
                             "configuration": {
-                                "language": "en",
-                                "check_spelling": true
+                                "language": "en-US"
                             }
                         }
                     ]

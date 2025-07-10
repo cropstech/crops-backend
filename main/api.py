@@ -166,35 +166,26 @@ def create_workspace(request, data: WorkspaceCreateSchema):
                 "order": 1,
                 "ai_actions": [
                     {
-                        "action": "spelling_grammar",
+                        "action": "grammar",
                         "is_enabled": True,
                         "configuration": {
-                            "language": "en",
-                            "check_spelling": True,
-                            "check_grammar": True
+                            "language": "en-US"
                         }
                     },
                     {
                         "action": "color_contrast",
                         "is_enabled": True,
-                        "configuration": {
-                            "wcag_level": "AA"
-                        }
+                        "configuration": {}
                     },
                     {
                         "action": "image_quality",
                         "is_enabled": True,
-                        "configuration": {
-                            "min_resolution": 1920,
-                            "check_compression": True
-                        }
+                        "configuration": {}
                     },
                     {
-                        "action": "image_artifacts",
+                        "action": "text_overflow",
                         "is_enabled": True,
-                        "configuration": {
-                            "sensitivity": "medium"
-                        }
+                        "configuration": {}
                     }
                 ]
             },
@@ -1583,14 +1574,24 @@ def create_field(request, workspace_id: UUID, data: FieldConfiguration):
     - DATE: Date/time input
     
     Available AI actions for SINGLE_SELECT options:
-    - spelling_grammar: Checks spelling and grammar in text
-      Config: {"language": "en|es|fr", "check_spelling": bool, "check_grammar": bool}
+    - grammar: Checks grammar in text
+      Config: {"language": "en-US|de|es|fr|it|pt|nl|ar|ja|zh-CN|..."}
+      Use GET /ai-actions/language-choices to get full language metadata
     - color_contrast: Analyzes color contrast for accessibility
-      Config: {"wcag_level": "AA|AAA"}
+      Config: {}
+    - color_blindness: Analyzes content for color blindness accessibility
+      Config: {}
     - image_quality: Checks image resolution and quality
-      Config: {"min_resolution": int, "check_compression": bool}
-    - image_artifacts: Detects image artifacts and blurriness
-      Config: {"sensitivity": "low|medium|high"}
+      Config: {}
+    - font_size_detection: Detects and analyzes font sizes in text
+      Config: {}
+    - text_overflow: Detects text that overflows its container
+      Config: {}
+
+    - placeholder_detection: Detects placeholder text that should be replaced
+      Config: {}
+    - repeated_text: Detects repeated or duplicated text content
+      Config: {}
     
     Permissions:
     - Requires ADMIN role in the workspace
@@ -1755,14 +1756,28 @@ def set_field_value(
 @decorate_view(check_workspace_permission(WorkspaceMember.Role.COMMENTER))
 def get_available_ai_actions(request, workspace_id: UUID):
     """Get list of available AI actions and their configurations"""
-    return [
-        {
+    actions = []
+    for action, name in AIActionChoices.choices:
+        definition = AIActionDefinition.get_definition(action)
+        
+        # Add language choices for grammar action
+        if action == 'grammar':
+            definition = definition.copy()
+            definition['language_choices'] = AIActionDefinition.get_language_choices()
+            
+        actions.append({
             'id': action,
             'name': name,
-            'definition': AIActionDefinition.get_definition(action)
-        }
-        for action, name in AIActionChoices.choices
-    ]
+            'definition': definition
+        })
+    
+    return actions
+
+@router.get("/workspaces/{uuid:workspace_id}/ai-actions/language-choices", response=List[Dict])
+@decorate_view(check_workspace_permission(WorkspaceMember.Role.COMMENTER))
+def get_language_choices(request, workspace_id: UUID):
+    """Get available language choices for grammar checking"""
+    return AIActionDefinition.get_language_choices()
 
 @router.get("/workspaces/{uuid:workspace_id}/ai-actions/results", response=List[AIActionResultSchema])
 @decorate_view(check_workspace_permission(WorkspaceMember.Role.COMMENTER))

@@ -1,7 +1,7 @@
 from django.contrib import admin
 from django.db import models
 from main.models import (
-    Workspace, WorkspaceMember, Asset, AssetAnalysis, Board, BoardAsset,
+    Workspace, WorkspaceMember, Asset, AssetAnalysis, AssetCheckerAnalysis, Board, BoardAsset,
     CustomField, CustomFieldOption, CustomFieldValue, AIActionResult,
     CustomFieldOptionAIAction, Comment, Subscription, NotificationPreference, EmailBatch, BoardFollower, BoardExplicitUnfollow, UserNotificationPreference
 )
@@ -46,6 +46,16 @@ class AssetAnalysisAdmin(admin.ModelAdmin):
     list_display = ('asset', 'created_at', 'updated_at')
     search_fields = ['asset__name']
     ordering = ['-created_at']
+
+class AssetCheckerAnalysisAdmin(admin.ModelAdmin):
+    list_display = ('check_id', 'status', 's3_bucket', 's3_key', 'webhook_received', 'created_at', 'completed_at')
+    list_filter = ('status', 'webhook_received', 'use_webhook')
+    search_fields = ['check_id', 's3_bucket', 's3_key']
+    ordering = ['-created_at']
+    readonly_fields = ('check_id', 'created_at', 'completed_at', 'webhook_received')
+    
+    def get_queryset(self, request):
+        return super().get_queryset(request).select_related()
 
 class BoardAdmin(admin.ModelAdmin):
     list_display = ('name', 'id', 'workspace', 'created_at', 'updated_at')
@@ -102,6 +112,7 @@ admin.site.register(Workspace, WorkspaceAdmin)
 admin.site.register(WorkspaceMember, WorkspaceMemberAdmin)
 admin.site.register(Asset, AssetAdmin)
 admin.site.register(AssetAnalysis, AssetAnalysisAdmin)
+admin.site.register(AssetCheckerAnalysis, AssetCheckerAnalysisAdmin)
 admin.site.register(Board, BoardAdmin)
 admin.site.register(BoardAsset, BoardAssetAdmin)
 admin.site.register(CustomField, CustomFieldAdmin)
