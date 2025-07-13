@@ -9,7 +9,7 @@ import logging
 from ninja.security import APIKeyHeader
 from .models import Asset, AssetAnalysis, AssetCheckerAnalysis
 from .services.asset_checker_service import AssetCheckerService, WebhookPayload
-from .services.webhook_models import WebhookValidator, WebhookPayloadSchema
+from .services.webhook_models import WebhookPayloadSchema
 from datetime import datetime
 from django.utils import timezone
 logger = logging.getLogger(__name__)
@@ -53,16 +53,7 @@ class AssetWebhookSchema(Schema):
     status: str  # 'success' or 'failed'
     metadata: AssetMetadataSchema
 
-# Asset Checker webhook schemas
-class AssetCheckerResultsSchema(Schema):
-    """Schema for asset checker analysis results"""
-    check_id: str
-    status: str  # 'pending', 'processing', 'completed', 'failed'
-    results: Optional[Dict[str, Any]] = None
-    error: Optional[str] = None
-    metadata: Optional[Dict[str, Any]] = None
-    progress: Optional[int] = None
-    estimated_completion: Optional[str] = None
+# Asset Checker webhook schemas are handled dynamically now
 
 
 @router.post(
@@ -221,24 +212,39 @@ def asset_checker_webhook(request, check_id: str):
         logger.info(f"Received asset checker webhook for check_id: {check_id}")
         logger.info(f"Full webhook payload: {json.dumps(body, indent=2)}")
         
-        # Validate webhook payload
-        validation_result = WebhookValidator.validate_payload(body)
-        if not validation_result.is_valid:
-            logger.error(f"Invalid webhook payload for {check_id}: {validation_result.error_message}")
-            raise HttpError(400, f"Invalid payload: {validation_result.error_message}")
+        # Extract and validate required fields from the actual payload structure
+        payload_check_id = body.get('check_id')
+        payload_status = body.get('status')
+        payload_event = body.get('event')
+        
+        if not payload_check_id:
+            logger.error(f"Missing check_id in webhook payload for {check_id}")
+            raise HttpError(400, "Missing check_id in webhook payload")
+        
+        if not payload_status:
+            logger.error(f"Missing status in webhook payload for {check_id}")
+            raise HttpError(400, "Missing status in webhook payload")
         
         # Use the check_id from URL (our generated one) regardless of Lambda's internal ID
-        if validation_result.payload.check_id != check_id:
-            logger.info(f"Lambda using different internal check_id: URL={check_id}, payload={validation_result.payload.check_id} - using URL check_id")
+        if payload_check_id != check_id:
+            logger.info(f"Lambda using different internal check_id: URL={check_id}, payload={payload_check_id} - using URL check_id")
+        
+        # Transform the complex webhook payload into structured results
+        results = _extract_results_from_webhook_payload(body)
         
         # Process the webhook using the service (use our check_id from URL)
         service = AssetCheckerService()
         webhook_payload = WebhookPayload(
             check_id=check_id,
-            status=validation_result.payload.status,
-            results=validation_result.payload.results,
-            error=validation_result.payload.error,
-            metadata=validation_result.payload.metadata
+            status=payload_status,
+            results=results,
+            error=body.get('error'),
+            metadata={
+                'event': payload_event,
+                'webhook_timestamp': body.get('webhook_timestamp'),
+                'execution_info': body.get('execution_info'),
+                'asset_info': body.get('asset_info')
+            }
         )
         
         success = service.process_webhook_payload(webhook_payload)
@@ -247,7 +253,8 @@ def asset_checker_webhook(request, check_id: str):
             return {
                 "success": True, 
                 "message": f"Asset checker webhook processed for {check_id}",
-                "status": validation_result.payload.status
+                "status": payload_status,
+                "results_extracted": results is not None
             }
         else:
             logger.error(f"Failed to process webhook for {check_id}")
@@ -259,6 +266,99 @@ def asset_checker_webhook(request, check_id: str):
     except Exception as e:
         logger.error(f"Error processing asset checker webhook for {check_id}: {str(e)}")
         raise HttpError(500, f"Webhook processing failed: {str(e)}")
+
+
+def _extract_results_from_webhook_payload(body: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """
+    Extract and structure results from the complex webhook payload.
+    Transforms the Lambda webhook format into a structured results object.
+    """
+    try:
+        # Extract main components from the webhook payload
+        summary = body.get('summary', {})
+        individual_checks = body.get('individual_checks', [])
+        execution_info = body.get('execution_info', {})
+        asset_info = body.get('asset_info', {})
+        
+        # Structure the results in a consistent format
+        results = {
+            'summary': summary,
+            'individual_checks': individual_checks,
+            'execution_info': execution_info,
+            'asset_info': asset_info,
+            'raw_payload': body,  # Keep the full payload for debugging
+            'processed_at': datetime.now().isoformat()
+        }
+        
+        # Extract key metrics for easy access
+        results['metrics'] = {
+            'total_issues': summary.get('total_issues', 0),
+            'average_score': summary.get('average_score', 0),
+            'checks_summary': summary.get('checks_summary', {}),
+            'execution_time_ms': execution_info.get('execution_time_ms', 0),
+            'success_rate_percent': execution_info.get('success_rate_percent', 0)
+        }
+        
+        # Extract individual check results organized by check type
+        results['checks_by_type'] = {}
+        for check in individual_checks:
+            check_type = check.get('check_type')
+            if check_type:
+                results['checks_by_type'][check_type] = check
+        
+        # Extract issues and recommendations across all checks
+        all_issues = []
+        all_recommendations = []
+        
+        for check in individual_checks:
+            # Extract issues from various check result structures
+            if 'grammar_result' in check:
+                grammar_issues = check['grammar_result'].get('issues', [])
+                all_issues.extend([f"Grammar: {issue}" for issue in grammar_issues])
+            
+            if 'image_quality_result' in check:
+                quality_issues = check['image_quality_result'].get('issues', [])
+                all_issues.extend([f"Image Quality: {issue}" for issue in quality_issues])
+                
+                quality_recommendations = check['image_quality_result'].get('recommendations', [])
+                all_recommendations.extend([f"Image Quality: {rec}" for rec in quality_recommendations])
+            
+            if 'text_quality_result' in check:
+                text_issues = check['text_quality_result'].get('issues', [])
+                for issue in text_issues:
+                    if isinstance(issue, dict):
+                        issue_type = issue.get('type', 'text quality')
+                        message = issue.get('message', str(issue))
+                        all_issues.append(f"Text Quality ({issue_type}): {message}")
+                    else:
+                        all_issues.append(f"Text Quality: {issue}")
+            
+            # Handle accessibility results
+            if 'body' in check and isinstance(check['body'], dict):
+                accessibility_issues = check['body'].get('issues', [])
+                for issue in accessibility_issues:
+                    if isinstance(issue, dict):
+                        issue_type = issue.get('type', 'accessibility')
+                        message = issue.get('message', str(issue))
+                        all_issues.append(f"Accessibility ({issue_type}): {message}")
+                    else:
+                        all_issues.append(f"Accessibility: {issue}")
+        
+        results['all_issues'] = all_issues
+        results['all_recommendations'] = all_recommendations
+        
+        logger.info(f"Extracted {len(all_issues)} issues and {len(all_recommendations)} recommendations from webhook payload")
+        
+        return results
+        
+    except Exception as e:
+        logger.error(f"Error extracting results from webhook payload: {str(e)}")
+        # Return a minimal results structure with the error
+        return {
+            'error': f"Failed to extract results: {str(e)}",
+            'raw_payload': body,
+            'processed_at': datetime.now().isoformat()
+        }
 
 
 
