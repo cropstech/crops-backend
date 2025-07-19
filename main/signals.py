@@ -130,6 +130,12 @@ default_app_config = 'main.apps.MainConfig'
 @receiver(post_save, sender=CustomFieldValue)
 def trigger_ai_actions_on_field_value_change(sender, instance, created, **kwargs):
     """Trigger AI actions when a custom field value is created or updated"""
+    # Check if AI actions were already triggered via API endpoint
+    from main.services.ai_actions import _thread_local
+    if getattr(_thread_local, 'api_triggered', False):
+        logger.info("Skipping signal-based AI action trigger - already handled by API endpoint")
+        return
+    
     # Only trigger for single-select fields with option values
     if instance.field.field_type == 'SINGLE_SELECT' and instance.option_value:
         trigger_ai_actions(instance)

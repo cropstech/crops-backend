@@ -213,9 +213,18 @@ def asset_checker_webhook(request, check_id: str):
         logger.info(f"Full webhook payload: {json.dumps(body, indent=2)}")
         
         # Extract and validate required fields from the actual payload structure
+        # Handle both direct payload and wrapped payload formats
         payload_check_id = body.get('check_id')
         payload_status = body.get('status')
         payload_event = body.get('event')
+        
+        # Check if the payload is wrapped in a 'data' field
+        if not payload_check_id and 'data' in body:
+            data_section = body['data']
+            payload_check_id = data_section.get('check_id')
+            payload_status = data_section.get('status')
+            # Use the data section for further processing
+            body = data_section
         
         if not payload_check_id:
             logger.error(f"Missing check_id in webhook payload for {check_id}")
@@ -272,21 +281,30 @@ def _extract_results_from_webhook_payload(body: Dict[str, Any]) -> Optional[Dict
     """
     Extract and structure results from the complex webhook payload.
     Transforms the Lambda webhook format into a structured results object.
+    Supports both direct payload and wrapped payload (with 'data' field) formats.
+    
+    Updated to handle the new standardized 'issues' array format.
     """
     try:
+        # Handle both direct payload and wrapped payload formats
+        data_section = body.get('data', body)  # Use 'data' if present, otherwise use body directly
+        
         # Extract main components from the webhook payload
-        summary = body.get('summary', {})
-        individual_checks = body.get('individual_checks', [])
-        execution_info = body.get('execution_info', {})
-        asset_info = body.get('asset_info', {})
+        summary = data_section.get('summary', {})
+        issues = data_section.get('issues', [])  # New standardized issues array
+        execution_info = data_section.get('execution_info', {})
+        asset_info = data_section.get('asset_info', {})
+        checks_summary = data_section.get('checks_summary', [])
         
         # Structure the results in a consistent format
         results = {
             'summary': summary,
-            'individual_checks': individual_checks,
+            'issues': issues,  # All issues in standardized format
+            'checks_summary': checks_summary,
             'execution_info': execution_info,
             'asset_info': asset_info,
-            'raw_payload': body,  # Keep the full payload for debugging
+            'raw_payload': data_section,  # Keep the data section for debugging
+            'original_payload': body,  # Keep the original payload structure
             'processed_at': datetime.now().isoformat()
         }
         
@@ -294,60 +312,39 @@ def _extract_results_from_webhook_payload(body: Dict[str, Any]) -> Optional[Dict
         results['metrics'] = {
             'total_issues': summary.get('total_issues', 0),
             'average_score': summary.get('average_score', 0),
-            'checks_summary': summary.get('checks_summary', {}),
-            'execution_time_ms': execution_info.get('execution_time_ms', 0),
-            'success_rate_percent': execution_info.get('success_rate_percent', 0)
+            'checks_completed': summary.get('checks_completed', 0),
+            'checks_failed': summary.get('checks_failed', 0),
+            'checks_skipped': summary.get('checks_skipped', 0),
+            'execution_time_ms': execution_info.get('execution_time_ms', 0)
         }
         
-        # Extract individual check results organized by check type
-        results['checks_by_type'] = {}
-        for check in individual_checks:
-            check_type = check.get('check_type')
-            if check_type:
-                results['checks_by_type'][check_type] = check
+        # Group issues by check_type for easy access
+        results['issues_by_check_type'] = {}
+        for issue in issues:
+            check_type = issue.get('check_type', 'unknown')
+            if check_type not in results['issues_by_check_type']:
+                results['issues_by_check_type'][check_type] = []
+            results['issues_by_check_type'][check_type].append(issue)
         
-        # Extract issues and recommendations across all checks
-        all_issues = []
-        all_recommendations = []
+        # Group issues by severity for summary
+        results['issues_by_severity'] = {}
+        for issue in issues:
+            severity = issue.get('severity', 'unknown')
+            if severity not in results['issues_by_severity']:
+                results['issues_by_severity'][severity] = []
+            results['issues_by_severity'][severity].append(issue)
         
-        for check in individual_checks:
-            # Extract issues from various check result structures
-            if 'grammar_result' in check:
-                grammar_issues = check['grammar_result'].get('issues', [])
-                all_issues.extend([f"Grammar: {issue}" for issue in grammar_issues])
-            
-            if 'image_quality_result' in check:
-                quality_issues = check['image_quality_result'].get('issues', [])
-                all_issues.extend([f"Image Quality: {issue}" for issue in quality_issues])
-                
-                quality_recommendations = check['image_quality_result'].get('recommendations', [])
-                all_recommendations.extend([f"Image Quality: {rec}" for rec in quality_recommendations])
-            
-            if 'text_quality_result' in check:
-                text_issues = check['text_quality_result'].get('issues', [])
-                for issue in text_issues:
-                    if isinstance(issue, dict):
-                        issue_type = issue.get('type', 'text quality')
-                        message = issue.get('message', str(issue))
-                        all_issues.append(f"Text Quality ({issue_type}): {message}")
-                    else:
-                        all_issues.append(f"Text Quality: {issue}")
-            
-            # Handle accessibility results
-            if 'body' in check and isinstance(check['body'], dict):
-                accessibility_issues = check['body'].get('issues', [])
-                for issue in accessibility_issues:
-                    if isinstance(issue, dict):
-                        issue_type = issue.get('type', 'accessibility')
-                        message = issue.get('message', str(issue))
-                        all_issues.append(f"Accessibility ({issue_type}): {message}")
-                    else:
-                        all_issues.append(f"Accessibility: {issue}")
+        # Create check type summary from checks_summary
+        results['check_type_summary'] = {}
+        for check_summary in checks_summary:
+            check_type = check_summary.get('check_type', 'unknown')
+            results['check_type_summary'][check_type] = {
+                'score': check_summary.get('score'),
+                'issues_found': check_summary.get('issues_found', 0),
+                'status': check_summary.get('status', 'unknown')
+            }
         
-        results['all_issues'] = all_issues
-        results['all_recommendations'] = all_recommendations
-        
-        logger.info(f"Extracted {len(all_issues)} issues and {len(all_recommendations)} recommendations from webhook payload")
+        logger.info(f"Extracted {len(issues)} issues across {len(results['issues_by_check_type'])} check types from webhook payload")
         
         return results
         

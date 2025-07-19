@@ -2,6 +2,7 @@ from django.db import models
 from django.contrib.auth.models import User
 from django.contrib.contenttypes.fields import GenericForeignKey
 from django.contrib.contenttypes.models import ContentType
+from django.core.files.storage import storages
 import uuid
 from django.utils import timezone
 from django.conf import settings
@@ -38,6 +39,7 @@ class Workspace(models.Model):
     )
     avatar = models.ImageField(
         upload_to=workspace_avatar_path,
+        storage=storages["staticfiles"],
         null=True,
         blank=True
     )
@@ -976,9 +978,25 @@ class Comment(models.Model):
     object_id = models.UUIDField()
     content_object = GenericForeignKey('content_type', 'object_id')
     
+    # Board context - null means comment appears in "all assets" view
+    board = models.ForeignKey('Board', on_delete=models.CASCADE, null=True, blank=True, 
+                             help_text="Board context for this comment. Null means global 'all assets' comment.")
+    
     author = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='comments', null=True, blank=True)
     text = models.TextField()
     comment_type = models.CharField(max_length=50, default='USER', help_text="Type of comment (USER, AI_ANALYSIS, SYSTEM, etc.)")
+    severity = models.CharField(
+        max_length=20,
+        choices=[
+            ('high', 'High'),
+            ('medium', 'Medium'),
+            ('low', 'Low'),
+            ('info', 'Info')
+        ],
+        null=True,
+        blank=True,
+        help_text="Severity level for AI analysis comments"
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     
@@ -1012,12 +1030,15 @@ class Comment(models.Model):
         ordering = ['-created_at']
         indexes = [
             models.Index(fields=['content_type', 'object_id']),
+            models.Index(fields=['content_type', 'object_id', 'board']),  # Board-scoped queries
+            models.Index(fields=['board', 'created_at']),  # Board timeline
             models.Index(fields=['created_at']),
             models.Index(fields=['author']),
         ]
 
     def __str__(self):
-        return f"Comment by {self.author.email} on {self.content_object}"
+        author_display = self.author.email if self.author else "Crops System"
+        return f"Comment by {author_display} on {self.content_object}"
 
     @property
     def is_reply(self):
@@ -1039,7 +1060,8 @@ class Comment(models.Model):
         )
         participants = set()
         for comment in thread_comments:
-            participants.add(comment.author)
+            if comment.author:  # Only add non-None authors
+                participants.add(comment.author)
         return participants
 
     def get_annotation_data(self):
@@ -1309,6 +1331,10 @@ class AssetCheckerAnalysis(models.Model):
     results = models.JSONField(null=True, blank=True)
     error_message = models.TextField(null=True, blank=True)
     
+    # Board context - null means analysis was triggered from "all assets" view
+    board = models.ForeignKey('Board', on_delete=models.CASCADE, null=True, blank=True,
+                             help_text="Board context that triggered this analysis. Null means global analysis.")
+    
     # Tracking metadata
     use_webhook = models.BooleanField(default=True)
     webhook_url = models.URLField(null=True, blank=True)
@@ -1323,6 +1349,7 @@ class AssetCheckerAnalysis(models.Model):
         indexes = [
             models.Index(fields=['check_id']),
             models.Index(fields=['status']),
+            models.Index(fields=['board', 'status']),  # Board-scoped analysis queries
             models.Index(fields=['created_at']),
         ]
     

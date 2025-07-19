@@ -450,6 +450,7 @@ class CustomFieldOptionAIActionUpdate(Schema):
 class CustomFieldValueCreate(Schema):
     content_type: str
     object_id: UUID
+    board_id: Optional[UUID] = None  # Board context for AI actions
     text_value: Optional[str] = None
     date_value: Optional[datetime] = None
     option_value_id: Optional[int] = None
@@ -640,6 +641,7 @@ class CommentSchema(Schema):
     text: str
     created_at: datetime
     updated_at: datetime
+    board_id: Optional[UUID] = None  # Board context - null for global "all assets" comments
     parent_id: Optional[int] = None
     is_reply: bool
     has_replies: bool
@@ -650,20 +652,34 @@ class CommentSchema(Schema):
     y: Optional[float] = None
     width: Optional[float] = None
     height: Optional[float] = None
+    severity: Optional[str] = None  # 'high', 'medium', 'low', 'info' for AI analysis comments
     
     @staticmethod
     def from_orm(obj):
-        return {
-            'id': obj.id,
-            'author': {
+        # Handle AI-generated comments that have no author
+        if obj.author is None:
+            # Create a system author representation for AI comments
+            author_data = {
+                'id': -1,  # Special ID for system comments
+                'email': 'ai-assistant@system.local',
+                'first_name': 'AI',
+                'last_name': 'Assistant'
+            }
+        else:
+            author_data = {
                 'id': obj.author.id,
                 'email': obj.author.email,
                 'first_name': obj.author.first_name,
                 'last_name': obj.author.last_name
-            },
+            }
+        
+        return {
+            'id': obj.id,
+            'author': author_data,
             'text': obj.text,
             'created_at': obj.created_at,
             'updated_at': obj.updated_at,
+            'board_id': obj.board.id if obj.board else None,
             'parent_id': obj.parent.id if obj.parent else None,
             'is_reply': obj.is_reply,
             'has_replies': obj.replies.exists() if hasattr(obj, 'replies') else False,
@@ -673,7 +689,8 @@ class CommentSchema(Schema):
             'x': obj.x,
             'y': obj.y,
             'width': obj.width,
-            'height': obj.height
+            'height': obj.height,
+            'severity': obj.severity
         }
 
 
@@ -681,6 +698,7 @@ class CommentCreate(Schema):
     text: str
     content_type: str  # 'asset' or 'board'
     object_id: UUID
+    board_id: Optional[UUID] = None  # Board context - null for global "all assets" comments
     parent_id: Optional[int] = None
     annotation_type: str = 'NONE'  # 'NONE', 'POINT', or 'AREA'
     x: Optional[float] = None
@@ -776,14 +794,123 @@ class NotificationSchema(Schema):
     description: str
     action_object_type: Optional[str] = None
     action_object_id: Optional[str] = None
+    action_object_url: Optional[str] = None
     target_name: Optional[str] = None
     target_type: Optional[str] = None
     target_id: Optional[str] = None
+    target_url: Optional[str] = None
     workspace_id: Optional[str] = None
     workspace_name: Optional[str] = None
     unread: bool
     timestamp: datetime
     data: Dict = {}
+    
+    @staticmethod
+    def _build_object_url(obj, workspace_id: Optional[str], notification_data: dict, action_object_board_context: Optional[str] = None) -> Optional[str]:
+        """Build URL for notification objects (assets, comments, boards)"""
+        if not obj or not workspace_id:
+            return None
+        
+        obj_type = obj.__class__.__name__.lower()
+        obj_id = str(obj.id)
+        
+        # Get board context from notification data if available
+        board_id = notification_data.get('board_id') if notification_data else None
+        
+        # If we have action_object board context (e.g., from a comment), prioritize it for assets
+        if not board_id and action_object_board_context and obj_type == 'asset':
+            board_id = action_object_board_context
+        
+        # Workaround for data field storage issue: try to infer board context
+        if not board_id and notification_data:
+            # Try to get board_name and look it up
+            board_name = notification_data.get('board_name')
+            if board_name and board_name != 'All Assets':
+                try:
+                    from main.models import Board
+                    board = Board.objects.filter(
+                        workspace_id=workspace_id, 
+                        name=board_name
+                    ).first()
+                    if board:
+                        board_id = str(board.id)
+                except:
+                    pass
+        
+        # Additional fallback: check if comment/asset has board context
+        if not board_id and obj_type in ['asset', 'comment']:
+            board_id = NotificationSchema._infer_board_from_object(obj, workspace_id)
+        
+        if obj_type == 'asset':
+            # For assets, try to determine the board context
+            if board_id:
+                # Board-scoped asset URL
+                return f"/w/{workspace_id}/b/{board_id}/a/{obj_id}"
+            else:
+                # Global asset URL (All Assets view)
+                return f"/w/{workspace_id}/a/{obj_id}"
+                
+        elif obj_type == 'comment':
+            # For comments, navigate to the asset the comment is on
+            if hasattr(obj, 'content_object'):
+                content_obj = obj.content_object
+                if hasattr(content_obj, 'id'):
+                    asset_id = str(content_obj.id)
+                    # Use board context from the comment if available
+                    if hasattr(obj, 'board') and obj.board:
+                        board_id = str(obj.board.id)
+                    if board_id:
+                        # Board-scoped comment URL
+                        return f"/w/{workspace_id}/b/{board_id}/a/{asset_id}?comment={obj_id}"
+                    else:
+                        # Global comment URL
+                        return f"/w/{workspace_id}/a/{asset_id}?comment={obj_id}"
+                        
+        elif obj_type == 'board':
+            # For boards, navigate to the board page
+            return f"/w/{workspace_id}/b/{obj_id}"
+            
+        elif obj_type == 'customfieldvalue':
+            # For field values, navigate to the related asset
+            if hasattr(obj, 'content_object'):
+                content_obj = obj.content_object
+                if hasattr(content_obj, 'id'):
+                    asset_id = str(content_obj.id)
+                    if board_id:
+                        return f"/w/{workspace_id}/b/{board_id}/a/{asset_id}"
+                    else:
+                        return f"/w/{workspace_id}/a/{asset_id}"
+        
+        # Fallback: try to use Django's get_absolute_url if available
+        if hasattr(obj, 'get_absolute_url'):
+            try:
+                return obj.get_absolute_url()
+            except:
+                pass
+        
+        # Final fallback to workspace
+        return f"/w/{workspace_id}"
+    
+    @staticmethod
+    def _infer_board_from_object(obj, workspace_id: str) -> Optional[str]:
+        """Try to infer board context from object relationships"""
+        try:
+            if hasattr(obj, 'board') and obj.board:
+                # Comment with board context
+                return str(obj.board.id)
+            elif hasattr(obj, 'boards'):
+                # Asset with boards - get the first board in this workspace
+                board = obj.boards.filter(workspace_id=workspace_id).first()
+                if board:
+                    return str(board.id)
+            elif hasattr(obj, 'content_object') and hasattr(obj.content_object, 'boards'):
+                # Comment on asset - get board from asset
+                board = obj.content_object.boards.filter(workspace_id=workspace_id).first()
+                if board:
+                    return str(board.id)
+        except:
+            pass
+        return None
     
     @staticmethod
     def from_orm(obj):
@@ -834,10 +961,29 @@ class NotificationSchema(Schema):
         # Extract action object information
         action_object_type = None
         action_object_id = None
+        action_object_url = None
+        action_object_board_context = None
         
         if obj.action_object:
             action_object_type = obj.action_object.__class__.__name__.lower()
             action_object_id = str(obj.action_object.id)
+            
+            # Extract board context from action_object (e.g., comment with board context)
+            if hasattr(obj.action_object, 'board') and obj.action_object.board:
+                action_object_board_context = str(obj.action_object.board.id)
+            
+            # Build URL for action object
+            action_object_url = NotificationSchema._build_object_url(
+                obj.action_object, workspace_id, obj.data, None
+            )
+        
+        # Build URL for target object
+        target_url = None
+        if obj.target:
+            # Pass action_object board context to target URL building for better board context
+            target_url = NotificationSchema._build_object_url(
+                obj.target, workspace_id, obj.data, action_object_board_context
+            )
         
         return {
             'id': obj.id,
@@ -849,9 +995,11 @@ class NotificationSchema(Schema):
             'description': obj.description,
             'action_object_type': action_object_type,
             'action_object_id': action_object_id,
+            'action_object_url': action_object_url,
             'target_name': str(obj.target) if obj.target else None,
             'target_type': target_type,
             'target_id': target_id,
+            'target_url': target_url,
             'workspace_id': workspace_id,
             'workspace_name': workspace_name,
             'unread': obj.unread,

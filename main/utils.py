@@ -15,7 +15,7 @@ from django.contrib.auth import get_user_model
 from ninja import Schema
 from typing import Optional
 import asyncio
-from django.core.files.storage import default_storage
+from django.core.files.storage import default_storage, storages
 from concurrent.futures import ThreadPoolExecutor
 from main.models import Asset
 from uuid import UUID

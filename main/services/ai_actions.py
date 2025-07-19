@@ -1,4 +1,7 @@
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from main.models import Board
 from django.utils import timezone
 from django.contrib.contenttypes.models import ContentType
 from main.models import (
@@ -10,10 +13,14 @@ from main.models import (
 )
 from .asset_checker_service import AssetCheckerService, AnalysisRequest
 import logging
+import threading
 
 logger = logging.getLogger(__name__)
 
-def trigger_ai_actions(field_value: CustomFieldValue) -> List[AIActionResult]:
+# Thread-local storage to track when AI actions are triggered via API
+_thread_local = threading.local()
+
+def trigger_ai_actions(field_value: CustomFieldValue, board_context: Optional['Board'] = None) -> List[AIActionResult]:
     """
     Trigger AI actions for a field value if it has a single-select option with enabled AI actions.
     Combines all actions into a single Lambda request for efficiency.
@@ -50,7 +57,7 @@ def trigger_ai_actions(field_value: CustomFieldValue) -> List[AIActionResult]:
 
     # Process all actions in a single Lambda request
     try:
-        process_combined_ai_actions(results)
+        process_combined_ai_actions(results, board_context)
     except Exception as e:
         logger.error(f"Failed to process combined AI actions: {str(e)}")
         # Mark all results as failed
@@ -62,7 +69,20 @@ def trigger_ai_actions(field_value: CustomFieldValue) -> List[AIActionResult]:
 
     return results
 
-def process_combined_ai_actions(results: List[AIActionResult]) -> None:
+def trigger_ai_actions_with_board_context(field_value: CustomFieldValue, board_context: Optional['Board'] = None) -> List[AIActionResult]:
+    """
+    Trigger AI actions with board context - used by API endpoints.
+    This bypasses the Django signal to avoid duplicate triggers.
+    """
+    # Set flag to prevent signal from triggering
+    _thread_local.api_triggered = True
+    try:
+        return trigger_ai_actions(field_value, board_context)
+    finally:
+        # Always clean up the flag
+        _thread_local.api_triggered = False
+
+def process_combined_ai_actions(results: List[AIActionResult], board_context: Optional['Board'] = None) -> None:
     """
     Process multiple AI actions in a single Lambda request for efficiency.
     """
@@ -99,7 +119,8 @@ def process_combined_ai_actions(results: List[AIActionResult]) -> None:
     response = service.start_analysis(
         analysis_request, 
         checks_enabled,
-        ai_action_result_ids=ai_action_result_ids  # Pass list of IDs
+        ai_action_result_ids=ai_action_result_ids,  # Pass list of IDs
+        board=board_context  # Pass board context for board-scoped analysis
     )
     
     # Store the check_id in all results for tracking
@@ -153,7 +174,8 @@ def process_ai_action(result: AIActionResult) -> None:
         response = service.start_analysis(
             analysis_request, 
             checks_enabled,
-            ai_action_result_id=result.id
+            ai_action_result_ids=[result.id],  # Convert to list for consistency
+            board=None  # Single action processing doesn't have board context yet
         )
         
         # Store the check_id in the result for tracking
@@ -381,89 +403,138 @@ def _create_asset_comments(ai_result: AIActionResult, results: Dict) -> None:
 def _extract_issues_from_results(action: str, results: Dict) -> List[str]:
     """
     Extract issues from analysis results based on action type.
-    Updated to handle the new structured results format from webhook processing.
+    Updated to handle the new standardized issues format from webhook processing.
     """
     issues = []
     
     try:
-        # Handle both old and new result formats
-        # New format has structured data with 'individual_checks', 'all_issues', etc.
-        # Old format might have 'data' with 'individual_checks' array
-        
-        individual_checks = []
-        
-        # Try new format first (from updated webhook processing)
-        if 'individual_checks' in results:
-            individual_checks = results['individual_checks']
-        # Fall back to old format if available
-        elif 'data' in results and 'individual_checks' in results['data']:
-            individual_checks = results['data']['individual_checks']
-        
-        # If we have pre-extracted issues, use them for quick filtering
-        if 'all_issues' in results:
-            all_issues = results['all_issues']
-            # Filter issues based on action type
+        # Handle new standardized issues format
+        if 'issues' in results:
+            all_issues = results['issues']
+            
+            # Filter issues based on action type and the standardized format
             if action == 'grammar':
-                issues = [issue for issue in all_issues if issue.startswith('Grammar:')]
+                # Filter by check_type
+                filtered_issues = [issue for issue in all_issues if issue.get('check_type') == 'grammar']
+                issues = [issue.get('message', 'Grammar issue detected') for issue in filtered_issues]
+                
             elif action == 'color_contrast':
-                issues = [issue for issue in all_issues if 'Color Contrast' in issue or 'color_contrast' in issue]
+                # Filter by check_type and issue_type
+                filtered_issues = [issue for issue in all_issues 
+                                 if issue.get('check_type') == 'text_accessibility' 
+                                 and issue.get('issue_type') == 'color_contrast']
+                issues = [issue.get('message', 'Color contrast issue detected') for issue in filtered_issues]
+                
             elif action == 'color_blindness':
-                issues = [issue for issue in all_issues if 'Color Blindness' in issue or 'color_blindness' in issue]
-            elif action == 'image_quality':
-                issues = [issue for issue in all_issues if 'Image Quality' in issue]
-            elif action in ['font_size_detection', 'text_overflow', 'mixed_fonts', 'placeholder_detection', 'repeated_text']:
-                issues = [issue for issue in all_issues if f'Text Quality ({action})' in issue]
-            else:
-                # For unknown actions, return all issues
-                issues = all_issues
-        else:
-            # Fall back to manual extraction from individual_checks
-            for check in individual_checks:
-                if action == 'grammar' and check.get('check_type') == 'grammar':
-                    grammar_result = check.get('grammar_result', {})
-                    grammar_issues = grammar_result.get('issues', [])
-                    issues.extend([f"Grammar: {issue}" for issue in grammar_issues])
-                
-                elif action == 'color_contrast' and check.get('check_type') == 'text_accessibility':
-                    body = check.get('body', {})
-                    accessibility_issues = body.get('issues', [])
-                    for issue in accessibility_issues:
-                        if isinstance(issue, dict) and issue.get('type') == 'color_contrast':
-                            message = issue.get('message', str(issue))
-                            issues.append(f"Color Contrast: {message}")
-                
-                elif action == 'color_blindness' and check.get('check_type') == 'text_accessibility':
-                    body = check.get('body', {})
-                    accessibility_issues = body.get('issues', [])
-                    for issue in accessibility_issues:
-                        if isinstance(issue, dict) and issue.get('type') == 'color_blindness':
-                            subtype = issue.get('subtype', 'color blindness')
-                            message = issue.get('message', str(issue))
-                            issues.append(f"Color Blindness ({subtype}): {message}")
-                
-                elif action == 'image_quality' and check.get('check_type') == 'image_quality':
-                    image_result = check.get('image_quality_result', {})
-                    quality_issues = image_result.get('issues', [])
-                    issues.extend([f"Image Quality: {issue}" for issue in quality_issues])
+                # Filter by check_type and issue_type
+                filtered_issues = [issue for issue in all_issues 
+                                 if issue.get('check_type') == 'text_accessibility' 
+                                 and issue.get('issue_type') == 'color_blindness']
+                for issue in filtered_issues:
+                    blindness_type = issue.get('details', {}).get('blindness_type', 'color blindness')
+                    message = issue.get('message', 'Color blindness issue detected')
+                    issues.append(f"Color Blindness ({blindness_type}): {message}")
                     
-                    # Also check recommendations if no issues
-                    if not quality_issues:
-                        recommendations = image_result.get('recommendations', [])
-                        issues.extend([f"Image Quality Recommendation: {rec}" for rec in recommendations[:3]])
+            elif action == 'image_quality':
+                # Filter by check_type
+                filtered_issues = [issue for issue in all_issues if issue.get('check_type') == 'image_quality']
+                issues = [issue.get('message', 'Image quality issue detected') for issue in filtered_issues]
                 
-                # Text quality checks
+            elif action in ['font_size_detection', 'text_overflow', 'mixed_fonts', 'placeholder_detection', 'repeated_text']:
+                # Filter by check_type and specific issue_type
+                action_to_issue_type = {
+                    'font_size_detection': 'font_size_issue',
+                    'text_overflow': 'text_overflow',
+                    'mixed_fonts': 'mixed_fonts',
+                    'placeholder_detection': 'placeholder_text_detected',
+                    'repeated_text': 'repeated_text_detected'
+                }
+                
+                target_issue_type = action_to_issue_type.get(action, action)
+                filtered_issues = [issue for issue in all_issues 
+                                 if issue.get('check_type') == 'text_quality' 
+                                 and issue.get('issue_type') == target_issue_type]
+                issues = [issue.get('message', f'{action} issue detected') for issue in filtered_issues]
+                
+            else:
+                # For unknown actions, return all issues with their types
+                issues = [f"{issue.get('check_type', 'unknown')} - {issue.get('message', 'Issue detected')}" 
+                         for issue in all_issues]
+        
+        # Fallback to old format handling for backward compatibility
+        elif 'individual_checks' in results or ('data' in results and 'individual_checks' in results.get('data', {})):
+            individual_checks = results.get('individual_checks', [])
+            if not individual_checks and 'data' in results:
+                individual_checks = results['data'].get('individual_checks', [])
+            
+            # Use pre-extracted issues if available (old format)
+            if 'all_issues' in results:
+                all_issues = results['all_issues']
+                # Filter issues based on action type
+                if action == 'grammar':
+                    issues = [issue for issue in all_issues if issue.startswith('Grammar:')]
+                elif action == 'color_contrast':
+                    issues = [issue for issue in all_issues if 'Color Contrast' in issue or 'color_contrast' in issue]
+                elif action == 'color_blindness':
+                    issues = [issue for issue in all_issues if 'Color Blindness' in issue or 'color_blindness' in issue]
+                elif action == 'image_quality':
+                    issues = [issue for issue in all_issues if 'Image Quality' in issue]
                 elif action in ['font_size_detection', 'text_overflow', 'mixed_fonts', 'placeholder_detection', 'repeated_text']:
-                    if check.get('check_type') == 'text_quality':
-                        text_quality_result = check.get('text_quality_result', {})
-                        quality_issues = text_quality_result.get('issues', [])
-                        for issue in quality_issues:
-                            if isinstance(issue, dict):
-                                issue_type = issue.get('type', 'text quality')
-                                if issue_type == action:  # Only show issues for this specific action
-                                    message = issue.get('message', str(issue))
-                                    issues.append(f"Text Quality ({issue_type}): {message}")
-                            else:
-                                issues.append(f"Text Quality: {issue}")
+                    issues = [issue for issue in all_issues if f'Text Quality ({action})' in issue]
+                else:
+                    # For unknown actions, return all issues
+                    issues = all_issues
+            else:
+                # Manual extraction from individual_checks (old format)
+                for check in individual_checks:
+                    if action == 'grammar' and check.get('check_type') == 'grammar':
+                        grammar_result = check.get('grammar_result', {})
+                        grammar_issues = grammar_result.get('issues', [])
+                        issues.extend([f"Grammar: {issue}" for issue in grammar_issues])
+                    
+                    elif action == 'color_contrast' and check.get('check_type') == 'text_accessibility':
+                        body = check.get('body', {})
+                        accessibility_issues = body.get('issues', [])
+                        for issue in accessibility_issues:
+                            if isinstance(issue, dict) and issue.get('type') == 'color_contrast':
+                                message = issue.get('message', str(issue))
+                                issues.append(f"Color Contrast: {message}")
+                    
+                    elif action == 'color_blindness' and check.get('check_type') == 'text_accessibility':
+                        body = check.get('body', {})
+                        accessibility_issues = body.get('issues', [])
+                        for issue in accessibility_issues:
+                            if isinstance(issue, dict) and issue.get('type') == 'color_blindness':
+                                subtype = issue.get('subtype', 'color blindness')
+                                message = issue.get('message', str(issue))
+                                issues.append(f"Color Blindness ({subtype}): {message}")
+                    
+                    elif action == 'image_quality' and check.get('check_type') == 'image_quality':
+                        image_result = check.get('image_quality_result', {})
+                        quality_issues = image_result.get('issues', [])
+                        issues.extend([f"Image Quality: {issue}" for issue in quality_issues])
+                        
+                        # Also check recommendations if no issues
+                        if not quality_issues:
+                            recommendations = image_result.get('recommendations', [])
+                            issues.extend([f"Image Quality Recommendation: {rec}" for rec in recommendations[:3]])
+                    
+                    # Text quality checks (old format)
+                    elif action in ['font_size_detection', 'text_overflow', 'mixed_fonts', 'placeholder_detection', 'repeated_text']:
+                        if check.get('check_type') == 'text_quality':
+                            text_quality_result = check.get('text_quality_result', {})
+                            quality_issues = text_quality_result.get('issues', [])
+                            for issue in quality_issues:
+                                if isinstance(issue, dict):
+                                    issue_type = issue.get('type', 'text quality')
+                                    if issue_type == action:  # Only show issues for this specific action
+                                        message = issue.get('message', str(issue))
+                                        issues.append(f"Text Quality ({issue_type}): {message}")
+                                else:
+                                    issues.append(f"Text Quality: {issue}")
+        
+        # Log the extraction for debugging
+        logger.info(f"Extracted {len(issues)} issues for action '{action}' from results")
     
     except Exception as e:
         logger.error(f"Failed to extract issues from results: {str(e)}")

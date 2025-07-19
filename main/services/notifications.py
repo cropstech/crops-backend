@@ -328,4 +328,113 @@ class NotificationService:
                             'field_id': field_value.field.id,
                             'field_name': field_value.field.title
                         }
-                    ) 
+                    )
+    
+    @staticmethod
+    def _get_ai_system_user():
+        """Get or create a system user for AI notifications"""
+        from django.contrib.auth import get_user_model
+        User = get_user_model()
+        
+        # Try to get existing AI system user
+        ai_user, created = User.objects.get_or_create(
+            email='ai-assistant@system.local',
+            defaults={
+                'first_name': 'AI',
+                'last_name': 'Assistant',
+                'is_active': False,  # System user, not for login
+                'username': 'ai-assistant'
+            }
+        )
+        
+        if created:
+            logger.info("Created AI system user for notifications")
+        
+        return ai_user
+    
+    @staticmethod
+    def notify_ai_check_completed(comments, asset):
+        """Handle notifications when AI analysis comments are created on an asset"""
+        logger.info(f"Processing AI check notifications for {len(comments)} comments on asset {asset.id}")
+        
+        # Check if comments are board-scoped or global
+        board_context = None
+        if comments:
+            first_comment = comments[0]
+            board_context = first_comment.board if hasattr(first_comment, 'board') else None
+        
+        if board_context:
+            # Board-scoped analysis - only notify followers of this specific board
+            boards = [board_context]
+            logger.info(f"Board-scoped AI analysis for board {board_context.name}")
+        else:
+            # Global analysis - notify followers of all boards containing this asset
+            board_assets = asset.boardasset_set.select_related('board')
+            boards = [ba.board for ba in board_assets]
+            logger.info(f"Global AI analysis across {len(boards)} boards")
+        
+        if not boards:
+            logger.warning(f"Asset {asset.id} is not in any boards, skipping AI check notifications")
+            return
+        
+        # Get AI system user for notifications
+        ai_user = NotificationService._get_ai_system_user()
+        
+        # Get all followers across relevant boards, but deduplicate users
+        all_followers = set()
+        for board in boards:
+            board_followers = NotificationService.get_board_followers(board)
+            for follower in board_followers:
+                all_followers.add(follower.user)
+        
+        logger.info(f"Found {len(all_followers)} unique followers across {len(boards)} boards for asset {asset.id}")
+        
+        # Send one notification per user (regardless of how many boards they follow)
+        for user in all_followers:
+            # Skip the AI user itself
+            if user == ai_user:
+                continue
+                
+            # Check user's notification preferences
+            pref = UserNotificationPreference.get_or_create_for_user(user)
+            event_pref = pref.get_preference_for_event(EventType.AI_CHECK_COMPLETED)
+            
+            logger.info(f"User {user.email} preference for {EventType.AI_CHECK_COMPLETED}: {event_pref}")
+            
+            if event_pref.get('in_app_enabled', True):
+                logger.info(f"Sending AI check notification to {user.email} for asset {asset.id}")
+                
+                # Extract check types from comment headers for rich notification data
+                check_types = []
+                for comment in comments:
+                    if comment.text:
+                        # Extract check type from first line (e.g., "🔤 **Grammar Check**")
+                        first_line = comment.text.split('\n')[0].strip()
+                        if '**' in first_line:
+                            # Extract text between ** markers
+                            check_type = first_line.split('**')[1] if '**' in first_line else first_line
+                            check_types.append(check_type)
+                
+                # Include board context in notification data
+                board_info = board_context.name if board_context else 'All Assets'
+                
+                notify.send(
+                    ai_user,  # AI system user as sender
+                    recipient=user,
+                    verb='completed AI analysis on',
+                    action_object=comments[0],  # Use first comment as the action object
+                    target=asset,
+                    description=f'AI analysis completed on {getattr(asset, "name", "asset")} in {board_info}',
+                    data={
+                        'event_type': EventType.AI_CHECK_COMPLETED,
+                        'asset_id': str(asset.id),
+                        'board_id': str(board_context.id) if board_context else None,
+                        'board_name': board_context.name if board_context else 'All Assets',
+                        'comment_count': len(comments),
+                        'check_types': check_types,
+                        'boards': [board.name for board in boards]  # Show which boards contain this asset
+                    }
+                )
+                logger.info(f"AI check notification sent successfully to {user.email}")
+            else:
+                logger.info(f"User {user.email} has in-app notifications disabled for AI checks") 

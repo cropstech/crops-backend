@@ -129,7 +129,7 @@ class AssetCheckerService:
             logger.error(f"Failed to get analysis results for {check_id}: {str(e)}")
             raise
     
-    def start_analysis(self, request: AnalysisRequest, checks_enabled: Dict[str, Any], ai_action_result_ids: List[int]) -> AnalysisResponse:
+    def start_analysis(self, request: AnalysisRequest, checks_enabled: Dict[str, Any], ai_action_result_ids: List[int], board: Optional['Board'] = None) -> AnalysisResponse:
         """
         Start asset analysis with checks_enabled format (used by AI actions)
         
@@ -137,6 +137,7 @@ class AssetCheckerService:
             request: Analysis request configuration
             checks_enabled: Dictionary with enabled checks in Lambda format
             ai_action_result_ids: List of AIActionResult IDs to link back to
+            board: Optional board context for the analysis
             
         Returns:
             AnalysisResponse with check_id and URLs
@@ -184,6 +185,7 @@ class AssetCheckerService:
                 status='processing',
                 s3_bucket=request.s3_bucket,
                 s3_key=request.s3_key,
+                board=board,  # Board context for the analysis
                 use_webhook=True,
                 webhook_url=webhook_url,
                 ai_action_result_id=ai_action_result_ids[0] if ai_action_result_ids else None
@@ -207,6 +209,7 @@ class AssetCheckerService:
                 status='failed',
                 s3_bucket=request.s3_bucket,
                 s3_key=request.s3_key,
+                board=board,  # Board context for the analysis
                 error_message=str(e),
                 use_webhook=True,
                 ai_action_result_id=ai_action_result_ids[0] if ai_action_result_ids else None
@@ -237,13 +240,9 @@ class AssetCheckerService:
             
             analysis.save()
             
-            # If this analysis is linked to an AI action, process the results
-            if analysis.ai_action_result_id and payload.status == 'completed' and payload.results:
-                try:
-                    from .ai_actions import process_asset_checker_webhook_result
-                    process_asset_checker_webhook_result(payload.check_id, payload.results)
-                except Exception as e:
-                    logger.error(f"Failed to process AI action webhook result: {str(e)}")
+            # Create comments for each individual check if completed successfully
+            if payload.status == 'completed' and payload.results:
+                self._create_comments_from_results(analysis, payload.results)
             
             logger.info(f"Processed webhook for analysis {payload.check_id}, status: {payload.status}")
             return True
@@ -254,6 +253,326 @@ class AssetCheckerService:
         except Exception as e:
             logger.error(f"Error processing webhook payload: {str(e)}")
             return False
+
+    def _create_comments_from_results(self, analysis: 'AssetCheckerAnalysis', results: Dict[str, Any]) -> None:
+        """
+        Create individual comments for each issue found in the analysis
+        
+        Args:
+            analysis: The AssetCheckerAnalysis record
+            results: The structured results from webhook processing with standardized issues
+        """
+        try:
+            from main.models import Comment, Asset
+            from django.contrib.contenttypes.models import ContentType
+            
+            # Get the asset from the S3 key
+            asset = self._get_asset_from_analysis(analysis)
+            if not asset:
+                logger.error(f"Could not find asset for analysis {analysis.check_id}")
+                return
+            
+            # Get all issues from the standardized format
+            all_issues = results.get('issues', [])
+            
+            if not all_issues:
+                logger.info(f"No issues found in results for {analysis.check_id}")
+                return
+            
+            content_type = ContentType.objects.get_for_model(Asset)
+            comments_created = []
+            
+            # Create one comment per issue
+            for issue in all_issues:
+                message = issue.get('message', 'Issue detected')
+                severity = issue.get('severity', 'info')
+                check_type = issue.get('check_type', 'unknown')
+                issue_type = issue.get('issue_type', 'unknown')
+                location = issue.get('location')
+                
+                # Prepare annotation data from location if available
+                annotation_type = 'NONE'
+                x = y = width = height = None
+                
+                if location and isinstance(location, dict):
+                    # Map location fields to comment annotation fields
+                    left = location.get('left')
+                    top = location.get('top')
+                    loc_width = location.get('width')
+                    loc_height = location.get('height')
+                    
+                    # Only set annotation if we have valid coordinates
+                    if all(v is not None for v in [left, top, loc_width, loc_height]):
+                        annotation_type = 'AREA'
+                        # Convert from fractional (0.13) to percentage (13.0)
+                        x = float(left) * 100
+                        y = float(top) * 100
+                        width = float(loc_width) * 100
+                        height = float(loc_height) * 100
+                        logger.info(f"Setting location annotation for {issue_type}: ({x}%, {y}%, {width}%, {height}%)")
+                    elif all(v is not None for v in [left, top]):
+                        # If we only have position, create a point annotation
+                        annotation_type = 'POINT'
+                        # Convert from fractional (0.05) to percentage (5.0)
+                        x = float(left) * 100
+                        y = float(top) * 100
+                        logger.info(f"Setting point annotation for {issue_type}: ({x}%, {y}%)")
+                
+                # Create comment with board context and location annotation if available
+                comment = Comment.objects.create(
+                    content_type=content_type,
+                    object_id=asset.id,
+                    board=analysis.board,  # Board context from analysis
+                    author=None,  # System comment
+                    text=message,
+                    comment_type='AI_ANALYSIS',
+                    severity=severity,
+                    annotation_type=annotation_type,
+                    x=x,
+                    y=y,
+                    width=width,
+                    height=height
+                )
+                comments_created.append(comment)
+                
+                location_info = f" with {annotation_type.lower()} annotation" if annotation_type != 'NONE' else ""
+                logger.info(f"Created {severity} severity comment for {check_type}: {message[:50]}...{location_info}")
+            
+            logger.info(f"Created {len(comments_created)} individual issue comments for analysis {analysis.check_id}")
+            
+            # Trigger notifications for AI analysis completion
+            if comments_created:
+                from main.services.notifications import NotificationService
+                NotificationService.notify_ai_check_completed(comments_created, asset)
+                
+            # Update any linked AI action results 
+            if analysis.ai_action_result_id:
+                self._update_ai_action_results(analysis, results)
+            
+        except Exception as e:
+            logger.error(f"Failed to create comments from results: {str(e)}")
+    
+    def _update_ai_action_results(self, analysis: 'AssetCheckerAnalysis', results: Dict[str, Any]) -> None:
+        """Update AI action results without creating duplicate comments"""
+        try:
+            from .ai_actions import AIActionResult
+            from django.utils import timezone
+            
+            # Find AI action results linked to this analysis
+            ai_results = AIActionResult.objects.filter(
+                result__check_id=analysis.check_id,
+                status='PROCESSING'
+            )
+            
+            for ai_result in ai_results:
+                # Update the AI action result status
+                ai_result.result.update({
+                    'analysis_results': results,
+                    'completed_at': timezone.now().isoformat()
+                })
+                ai_result.status = 'COMPLETED'
+                ai_result.completed_at = timezone.now()
+                ai_result.save()
+                logger.info(f"Updated AI action result {ai_result.id} without creating duplicate comments")
+                
+        except Exception as e:
+            logger.error(f"Failed to update AI action results: {str(e)}")
+
+    def _get_asset_from_analysis(self, analysis: 'AssetCheckerAnalysis') -> Optional['Asset']:
+        """
+        Get the Asset object from the AssetCheckerAnalysis
+        
+        Args:
+            analysis: The AssetCheckerAnalysis record
+            
+        Returns:
+            Asset object or None if not found
+        """
+        try:
+            from main.models import Asset
+            
+            # Try to find asset by S3 key pattern
+            # The s3_key typically contains the asset ID in the path
+            s3_key = analysis.s3_key
+            
+            # Extract asset ID from S3 key (e.g., "media/workspaces/{workspace_id}/assets/{asset_id}/...")
+            if '/assets/' in s3_key:
+                parts = s3_key.split('/assets/')
+                if len(parts) > 1:
+                    asset_part = parts[1].split('/')[0]  # Get the asset ID part
+                    try:
+                        asset = Asset.objects.get(id=asset_part)
+                        return asset
+                    except Asset.DoesNotExist:
+                        logger.warning(f"Asset with ID {asset_part} not found")
+            
+            # Fallback: search by s3_key pattern in file field
+            assets = Asset.objects.filter(file__icontains=s3_key.split('/')[-1])
+            if assets.exists():
+                return assets.first()
+            
+            logger.warning(f"Could not find asset for S3 key: {s3_key}")
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error getting asset from analysis: {str(e)}")
+            return None
+
+    def _format_check_type_comment(self, check_type: str, issues: List[Dict[str, Any]], summary: Dict[str, Any], results: Dict[str, Any]) -> Optional[str]:
+        """
+        Format a check type's results into a comment text using the new standardized issues format
+        
+        Args:
+            check_type: The type of check (e.g., 'text_accessibility', 'text_quality')
+            issues: List of standardized issues for this check type
+            summary: Summary info for this check type from checks_summary
+            results: Full results object for additional context
+            
+        Returns:
+            Formatted comment text or None if check should be skipped
+        """
+        try:
+            status = summary.get('status', 'unknown')
+            
+            # Skip skipped checks
+            if status == 'skipped':
+                return None
+            
+            # Start building the comment
+            comment_lines = []
+            
+            # Header with check type and status
+            check_display_name = {
+                'grammar': 'Grammar Check',
+                'image_quality': 'Image Quality Check', 
+                'text_accessibility': 'Text Accessibility Check',
+                'text_quality': 'Text Quality Check',
+                'legacy_color_checks': 'Legacy Color Checks'
+            }.get(check_type, check_type.replace('_', ' ').title())
+            
+            if status == 'completed':
+                comment_lines.append(f"✅ **{check_display_name}** - Analysis Complete")
+            elif status == 'failed':
+                comment_lines.append(f"❌ **{check_display_name}** - Analysis Failed")
+            else:
+                comment_lines.append(f"⚠️ **{check_display_name}** - Status: {status}")
+            
+            # Add score if available
+            score = summary.get('score')
+            if score is not None:
+                comment_lines.append(f"📊 **Score:** {score}/100")
+            
+            # Add issues summary
+            total_issues = len(issues)
+            if total_issues > 0:
+                comment_lines.append(f"🔴 **Issues Found:** {total_issues}")
+                
+                # Group issues by severity and type
+                severity_groups = {}
+                issue_type_groups = {}
+                
+                for issue in issues:
+                    severity = issue.get('severity', 'unknown')
+                    issue_type = issue.get('issue_type', 'unknown')
+                    
+                    if severity not in severity_groups:
+                        severity_groups[severity] = []
+                    severity_groups[severity].append(issue)
+                    
+                    if issue_type not in issue_type_groups:
+                        issue_type_groups[issue_type] = []
+                    issue_type_groups[issue_type].append(issue)
+                
+                # Show severity breakdown
+                severity_order = ['high', 'medium', 'low']
+                severity_emojis = {'high': '🔴', 'medium': '🟡', 'low': '🟠'}
+                
+                for severity in severity_order:
+                    if severity in severity_groups:
+                        count = len(severity_groups[severity])
+                        emoji = severity_emojis.get(severity, '⚪')
+                        comment_lines.append(f"  {emoji} **{severity.title()} Priority:** {count} issues")
+                
+                # Show detailed breakdown by issue type (limit to most common)
+                sorted_issue_types = sorted(issue_type_groups.items(), key=lambda x: len(x[1]), reverse=True)
+                
+                comment_lines.append(f"\n**Issue Breakdown:**")
+                for issue_type, type_issues in sorted_issue_types[:5]:  # Top 5 issue types
+                    count = len(type_issues)
+                    display_type = issue_type.replace('_', ' ').title()
+                    comment_lines.append(f"• **{display_type}:** {count} instances")
+                    
+                    # Show a sample issue message
+                    sample_issue = type_issues[0]
+                    sample_message = sample_issue.get('message', '')
+                    if sample_message and len(sample_message) < 100:
+                        comment_lines.append(f"  ↳ _{sample_message}_")
+                    elif len(type_issues) == 1:
+                        # For single issues, show more detail
+                        text_content = sample_issue.get('text_content')
+                        if text_content:
+                            comment_lines.append(f"  ↳ Text: \"{text_content}\"")
+                
+                if len(sorted_issue_types) > 5:
+                    remaining = len(sorted_issue_types) - 5
+                    comment_lines.append(f"• ... and {remaining} more issue types")
+                    
+            else:
+                comment_lines.append("✅ **No issues found**")
+            
+            # Add check-specific recommendations
+            if check_type == 'text_accessibility' and issues:
+                self._add_accessibility_recommendations(comment_lines, issues)
+            elif check_type == 'text_quality' and issues:
+                self._add_text_quality_recommendations(comment_lines, issues)
+            
+            # Add timestamp
+            comment_lines.append(f"\n*Analysis completed at {results.get('processed_at', 'unknown time')}*")
+            
+            return '\n'.join(comment_lines)
+            
+        except Exception as e:
+            logger.error(f"Error formatting {check_type} comment: {str(e)}")
+            return f"Error processing {check_type} check: {str(e)}"
+
+    def _add_accessibility_recommendations(self, comment_lines: List[str], issues: List[Dict[str, Any]]) -> None:
+        """Add accessibility-specific recommendations based on issues found"""
+        has_contrast_issues = any(issue.get('issue_type') == 'color_contrast' for issue in issues)
+        has_blindness_issues = any(issue.get('issue_type') == 'color_blindness' for issue in issues)
+        
+        if has_contrast_issues or has_blindness_issues:
+            comment_lines.append(f"\n💡 **Recommendations:**")
+            
+            if has_contrast_issues:
+                comment_lines.append("• Increase contrast ratio between text and background colors")
+                comment_lines.append("• Aim for a contrast ratio of at least 4.5:1 for normal text")
+                
+            if has_blindness_issues:
+                comment_lines.append("• Avoid relying solely on color to convey information")
+                comment_lines.append("• Test design with color blindness simulators")
+                comment_lines.append("• Consider adding patterns, icons, or text labels")
+
+    def _add_text_quality_recommendations(self, comment_lines: List[str], issues: List[Dict[str, Any]]) -> None:
+        """Add text quality-specific recommendations based on issues found"""
+        issue_types = {issue.get('issue_type') for issue in issues}
+        
+        recommendations = []
+        
+        if 'placeholder_text_detected' in issue_types:
+            recommendations.append("• Replace placeholder text with final content")
+            recommendations.append("• Review all text blocks for lorem ipsum or generic text")
+            
+        if 'repeated_text_detected' in issue_types:
+            recommendations.append("• Review repeated text for intentional vs. accidental duplication")
+            recommendations.append("• Consider if repeated content serves a purpose")
+            
+        if 'text_close_to_edge' in issue_types:
+            recommendations.append("• Increase margins around text elements")
+            recommendations.append("• Ensure text has adequate breathing room from image edges")
+        
+        if recommendations:
+            comment_lines.append(f"\n💡 **Recommendations:**")
+            comment_lines.extend(recommendations)
     
     def start_polling_fallback(self, check_id: str) -> None:
         """

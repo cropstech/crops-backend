@@ -12,7 +12,7 @@ from ninja.security import django_auth
 from django.conf import settings
 from ninja.files import UploadedFile
 from django.db import transaction
-from django.core.files.storage import default_storage
+from django.core.files.storage import default_storage, storages
 from django.db.models import Q
 from django.contrib.contenttypes.models import ContentType
 from concurrent.futures import ThreadPoolExecutor
@@ -129,19 +129,19 @@ def create_workspace(request, data: WorkspaceCreateSchema):
         )
     
     with transaction.atomic():
-        # Create workspace member
-        WorkspaceMember.objects.create(
-            workspace=workspace,
-            user=request.user,
-            role=WorkspaceMember.Role.ADMIN
-        )
-        
-        # Create default board
-        Board.objects.create(
+        # Create default board FIRST (before workspace member)
+        default_board = Board.objects.create(
             workspace=workspace,
             name="General",
             description="Default board for general content",
             created_by=request.user
+        )
+        
+        # Create workspace member (this will trigger auto-follow signal for the board we just created)
+        WorkspaceMember.objects.create(
+            workspace=workspace,
+            user=request.user,
+            role=WorkspaceMember.Role.ADMIN
         )
         
         # Create default status field
@@ -259,7 +259,8 @@ def update_workspace(
             workspace.avatar.delete(save=False)
         
         # Save new avatar to storage
-        file_path = default_storage.save(
+        staticfiles_storage = storages["staticfiles"]
+        file_path = staticfiles_storage.save(
             f'avatars/{file.name}', 
             file
         )
@@ -675,6 +676,17 @@ def upload_folder(
                     )
                     boards_by_path[current_path] = board
                     created_boards.append(board)
+                    
+                    # Smart Auto-Follow: Follow board when user creates it during folder upload
+                    from main.services.notifications import NotificationService
+                    if not NotificationService.is_following_board(request.user, board):
+                        NotificationService.follow_board(
+                            user=request.user,
+                            board=board,
+                            include_sub_boards=False,  # Conservative default for folder-created boards
+                            auto_followed=True  # Mark as auto-followed
+                        )
+                        logger.info(f"Auto-followed board '{board.name}' for user {request.user.email} after creating it during folder upload")
                 else:
                     logger.info(f"Board already exists at path: {current_path}")
                 
@@ -1128,6 +1140,21 @@ def create_board(request, workspace_id: UUID, data: BoardCreateSchema):
         default_sort=data.default_sort or '-date_uploaded'
     )
     
+    # Smart Auto-Follow: Follow board when user creates it
+    from main.services.notifications import NotificationService
+    if not NotificationService.is_following_board(request.user, board):
+        NotificationService.follow_board(
+            user=request.user,
+            board=board,
+            include_sub_boards=True,  # Board creators get sub-board notifications by default
+            auto_followed=True  # Mark as auto-followed
+        )
+        logger.info(f"Auto-followed board '{board.name}' for user {request.user.email} after creating it")
+    
+    # Trigger sub-board notifications if this is a sub-board
+    if parent:
+        NotificationService.notify_sub_board_created(board)
+    
     return board
 
 @router.get("/workspaces/{uuid:workspace_id}/boards", response=List[BoardOutSchema])
@@ -1354,6 +1381,18 @@ def bulk_add_to_board(request, workspace_id: UUID, board_id: UUID, data: AssetBu
             board.assets.add(asset)
             count += 1
     
+    # Smart Auto-Follow: Follow board when user adds assets to it
+    if count > 0:  # Only if we actually added assets
+        from main.services.notifications import NotificationService
+        if not NotificationService.is_following_board(request.user, board):
+            NotificationService.follow_board(
+                user=request.user,
+                board=board,
+                include_sub_boards=False,  # Conservative default
+                auto_followed=True  # Mark as auto-followed
+            )
+            logger.info(f"Auto-followed board '{board.name}' for user {request.user.email} after adding {count} assets")
+    
     return {"success": True, "added_count": count}
 
 @router.post("/workspaces/{uuid:workspace_id}/assets/bulk/move")
@@ -1377,6 +1416,17 @@ def bulk_move_assets(request, workspace_id: UUID, data: AssetBulkMoveSchema):
             asset.boards.clear()
             # Then add to the destination board
             asset.boards.add(board)
+        
+        # Smart Auto-Follow: Follow board when user moves assets to it
+        from main.services.notifications import NotificationService
+        if not NotificationService.is_following_board(request.user, board):
+            NotificationService.follow_board(
+                user=request.user,
+                board=board,
+                include_sub_boards=False,  # Conservative default
+                auto_followed=True  # Mark as auto-followed
+            )
+            logger.info(f"Auto-followed board '{board.name}' for user {request.user.email} after moving {assets.count()} assets")
             
     elif data.destination_type == 'workspace':
         # Move to workspace root (remove from all boards)
@@ -1712,7 +1762,7 @@ def set_field_value(
     field_id: int,
     data: CustomFieldValueCreate
 ):
-    """Set a custom field value for an asset or board"""
+    """Set a custom field value for an asset or board with optional board context for AI actions"""
     workspace = get_object_or_404(Workspace, id=workspace_id)
     field = get_object_or_404(CustomField, workspace=workspace, id=field_id)
     
@@ -1724,6 +1774,20 @@ def set_field_value(
     model = Asset if data.content_type == 'asset' else Board
     content_type_obj = ContentType.objects.get_for_model(model)
     content_object = get_object_or_404(model, workspace=workspace, id=data.object_id)
+    
+    # Validate board context if provided
+    board_context = None
+    if data.board_id:
+        board_context = get_object_or_404(Board, workspace=workspace, id=data.board_id)
+        
+        # Validate that the asset belongs to the specified board
+        if data.content_type == 'asset':
+            asset_in_board = BoardAsset.objects.filter(
+                board=board_context, 
+                asset_id=data.object_id
+            ).exists()
+            if not asset_in_board:
+                raise HttpError(400, f"Asset does not belong to the specified board")
     
     # Get or create the field value
     field_value, created = CustomFieldValue.objects.get_or_create(
@@ -1749,7 +1813,22 @@ def set_field_value(
             )
             field_value.multi_options.set(options)
     
+    # Set flag to prevent signal from triggering, then save
+    if field.field_type == 'SINGLE_SELECT' and field_value.option_value:
+        from main.services.ai_actions import _thread_local
+        _thread_local.api_triggered = True
+    
     field_value.save()
+    
+    # Trigger AI actions with board context if applicable
+    if field.field_type == 'SINGLE_SELECT' and field_value.option_value:
+        from main.services.ai_actions import trigger_ai_actions
+        try:
+            trigger_ai_actions(field_value, board_context)
+        finally:
+            # Clean up the flag
+            _thread_local.api_triggered = False
+    
     return field_value
 
 @router.get("/workspaces/{uuid:workspace_id}/ai-actions/available", response=List[Dict])
@@ -1921,6 +2000,20 @@ def create_comment(request, workspace_id: UUID, data: CommentCreate):
     if data.parent_id:
         parent = get_object_or_404(Comment, id=data.parent_id)
     
+    # Get board if specified for board-scoped comments
+    board = None
+    if data.board_id:
+        board = get_object_or_404(Board, workspace=workspace, id=data.board_id)
+        
+        # Validate that the asset belongs to the specified board
+        if data.content_type == 'asset':
+            asset_in_board = BoardAsset.objects.filter(
+                board=board, 
+                asset_id=data.object_id
+            ).exists()
+            if not asset_in_board:
+                raise HttpError(400, f"Asset does not belong to the specified board")
+    
     # Validate annotation data
     if data.annotation_type not in ['NONE', 'POINT', 'AREA']:
         raise HttpError(400, "Invalid annotation type")
@@ -1935,10 +2028,11 @@ def create_comment(request, workspace_id: UUID, data: CommentCreate):
         if any(v is None for v in [data.x, data.y, data.width, data.height]):
             raise HttpError(400, "Area annotation requires x, y, width, and height")
     
-    # Create comment
+    # Create comment with board context
     comment = Comment.objects.create(
         content_type=content_type_obj,
         object_id=data.object_id,
+        board=board,  # Board context - null for global comments
         author=request.user,
         text=data.text,
         parent=parent,
@@ -1998,9 +2092,10 @@ def get_comments(
     request, 
     workspace_id: UUID, 
     content_type: str, 
-    object_id: UUID
+    object_id: UUID,
+    board_id: Optional[UUID] = None
 ):
-    """Get all comments for an asset or board (including replies)"""
+    """Get comments for an asset or board with optional board context filtering"""
     workspace = get_object_or_404(Workspace, id=workspace_id)
     
     # Validate content type and object
@@ -2011,11 +2106,27 @@ def get_comments(
     content_type_obj = ContentType.objects.get_for_model(model)
     content_object = get_object_or_404(model, workspace=workspace, id=object_id)
     
-    # Get all comments for this object (both top-level and replies)
+    # Handle board_id parameter
+    board = None
+    if board_id:
+        board = get_object_or_404(Board, workspace=workspace, id=board_id)
+        
+        # Validate that the asset belongs to the specified board
+        if content_type == 'asset':
+            asset_in_board = BoardAsset.objects.filter(
+                board=board, 
+                asset_id=object_id
+            ).exists()
+            if not asset_in_board:
+                raise HttpError(400, f"Asset does not belong to the specified board")
+    
+    # Get comments filtered by board context
+    # board=None returns global comments, board=Board returns board-specific comments
     comments = Comment.objects.filter(
         content_type=content_type_obj,
-        object_id=object_id
-    ).select_related('author', 'parent').prefetch_related('mentioned_users', 'replies').order_by('created_at')
+        object_id=object_id,
+        board=board  # This will filter by board context (None for global, board for specific)
+    ).select_related('author', 'parent', 'board').prefetch_related('mentioned_users', 'replies').order_by('created_at')
     
     return [CommentSchema.from_orm(comment) for comment in comments]
 
@@ -2063,6 +2174,9 @@ def delete_comment(request, workspace_id: UUID, comment_id: int):
     
     comment.delete()
     return {"message": "Comment deleted successfully"}
+
+
+
 
 
 # Notification Preference Endpoints
