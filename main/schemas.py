@@ -225,6 +225,12 @@ class AssetBulkDeleteSchema(Schema):
 class AssetBulkDownloadSchema(Schema):
     asset_ids: List[UUID]
 
+class AssetUpdateSchema(Schema):
+    """Schema for updating individual asset properties"""
+    name: Optional[str] = Field(None, description="Updated name for the asset")
+    favorite: Optional[bool] = Field(None, description="Updated favorite status")
+    description: Optional[str] = Field(None, description="Updated description")
+
 class BulkDownloadResponseSchema(Schema):
     download_url: str
     expires_at: datetime

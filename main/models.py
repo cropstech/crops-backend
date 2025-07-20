@@ -419,6 +419,7 @@ class Asset(models.Model):
     workspace = models.ForeignKey(Workspace, on_delete=models.CASCADE, related_name='assets')
     boards = models.ManyToManyField(Board, through='BoardAsset', related_name='assets')
     name = models.CharField(max_length=255)
+    description = models.TextField(blank=True, null=True)
     file = models.FileField(
         upload_to=workspace_asset_path,
         max_length=500

@@ -62,6 +62,7 @@ from .schemas import (
     AssetBulkMoveSchema,
     AssetBulkDeleteSchema,
     AssetBulkDownloadSchema,
+    AssetUpdateSchema,
     BulkDownloadResponseSchema,
     BoardReorderSchema,
     AssetReorderRequestSchema,
@@ -762,6 +763,26 @@ def get_asset(request, workspace_id: UUID, asset_id: UUID):
         Asset.objects.filter(workspace_id=workspace_id),
         id=asset_id
     )
+    return asset
+
+@router.put("/workspaces/{uuid:workspace_id}/assets/{uuid:asset_id}", response=AssetSchema)
+@decorate_view(check_workspace_permission(WorkspaceMember.Role.EDITOR))
+def update_asset(request, workspace_id: UUID, asset_id: UUID, data: AssetUpdateSchema):
+    """Update an asset's properties like name and favorite status"""
+    asset = get_object_or_404(
+        Asset.objects.filter(workspace_id=workspace_id),
+        id=asset_id
+    )
+    
+    # Update fields if provided
+    if data.name is not None:
+        asset.name = data.name
+    if data.description is not None:
+        asset.description = data.description
+    if data.favorite is not None:
+        asset.favorite = data.favorite
+    
+    asset.save()
     return asset
 
 @router.post("/workspaces/{uuid:workspace_id}/assets", response=PaginatedAssetResponse)
