@@ -29,7 +29,11 @@ lambda_client = boto3.client(
     'lambda',
     aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
     aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
-    region_name=settings.AWS_S3_REGION_NAME
+    region_name=settings.AWS_S3_REGION_NAME,
+    config=Config(
+        read_timeout=300,  # 5 minutes timeout for Lambda execution
+        retries={'max_attempts': 2}
+    )
 )
 
 class DownloadManager:
@@ -88,6 +92,25 @@ class DownloadManager:
             return url
         except ClientError as e:
             logger.error(f"Error generating presigned URL for range: {str(e)}")
+            raise
+
+    @staticmethod
+    def get_presigned_url_for_zip(bucket: str, key: str, expires_in: int = URL_EXPIRY) -> str:
+        """Generate a presigned URL for S3 zip file download (without /media/ prefix)"""
+        try:
+            url = s3_client.generate_presigned_url(
+                'get_object',
+                Params={
+                    'Bucket': bucket,
+                    'Key': key,  # Use key as-is, don't add /media/ prefix
+                    'ResponseContentDisposition': f'attachment; filename="{key.split("/")[-1]}"',
+                    'ResponseContentType': 'application/zip'
+                },
+                ExpiresIn=expires_in
+            )
+            return url
+        except ClientError as e:
+            logger.error(f"Error generating presigned URL for zip: {str(e)}")
             raise
 
     @staticmethod
@@ -165,6 +188,10 @@ class DownloadManager:
         4. Returns a presigned URL to download the ZIP
         
         The Lambda function handles everything server-side, with no local downloads.
+        
+        Performance considerations:
+        - For 100+ files, consider increasing Lambda memory to 1024MB and timeout to 2-5 minutes
+        - Very large requests (500+ files) may benefit from batch processing
         """
         bucket = settings.AWS_STORAGE_CDN_BUCKET_NAME
         
@@ -198,30 +225,81 @@ class DownloadManager:
             
             # Invoke Lambda function to create ZIP
             logger.info(f"Invoking Lambda to create ZIP archive of {len(file_list)} files")
+            logger.info(f"Lambda payload: {json.dumps(payload, indent=2)}")
             response = lambda_client.invoke(
                 FunctionName=cls.LAMBDA_FUNCTION_NAME,
                 InvocationType='RequestResponse',  # Synchronous execution
                 Payload=json.dumps(payload)
             )
+            logger.info(f"Lambda invocation response status: {response['StatusCode']}")
             
             # Parse response
-            response_payload = json.loads(response['Payload'].read().decode('utf-8'))
+            try:
+                response_payload = json.loads(response['Payload'].read().decode('utf-8'))
+            except (json.JSONDecodeError, UnicodeDecodeError) as e:
+                logger.error(f"Failed to parse Lambda response: {str(e)}")
+                logger.error(f"Raw response: {response.get('Payload', 'No payload')}")
+                raise Exception(f"Lambda returned invalid response, possibly due to timeout or error: {str(e)}")
             
-            if response['StatusCode'] != 200 or 'error' in response_payload:
-                logger.error(f"Lambda ZIP creation failed: {response_payload.get('error', 'Unknown error')}")
-                raise Exception(f"Failed to create ZIP: {response_payload.get('error', 'Unknown error')}")
+            # Check if response payload is empty (can happen with timeouts)
+            if not response_payload:
+                logger.error("Lambda returned empty response, likely due to timeout")
+                raise Exception("Lambda function failed to return a response, likely due to timeout. Please try with fewer files or increase Lambda timeout.")
+            
+            # Check for various error conditions
+            has_error = (
+                response['StatusCode'] != 200 or 
+                response_payload.get('status') == 'error' or 
+                'error' in response_payload or
+                'errorMessage' in response_payload or  # Lambda timeout/error format
+                'errorType' in response_payload
+            )
+            
+            if has_error:
+                error_msg = response_payload.get('error') or response_payload.get('errorMessage') or f"Lambda returned status: {response['StatusCode']}"
+                logger.error(f"Lambda ZIP creation failed: {error_msg}")
+                logger.error(f"Full response: {response_payload}")
+                
+                # Check if this looks like a timeout
+                if 'timeout' in error_msg.lower() or 'Task timed out' in error_msg:
+                    raise Exception(f"Lambda function timed out while creating ZIP. Please increase Lambda timeout or try with fewer files. Error: {error_msg}")
+                else:
+                    raise Exception(f"Failed to create ZIP: {error_msg}")
+            
+            # Verify response contains expected fields
+            if 'output_key' not in response_payload:
+                logger.error("Lambda response missing output_key field, indicating incomplete execution")
+                raise Exception("Lambda function did not complete successfully - missing output information. This often indicates a timeout.")
             
             download_url = response_payload.get('presigned_url')
+            zip_size = response_payload.get('zip_size', 0)
+            successful_files = response_payload.get('successful_files', 0)
+            failed_files = response_payload.get('failed_files', [])
+            
+            # Verify that the Lambda actually created a zip file
+            if zip_size == 0:
+                logger.warning(f"Lambda returned zip_size of 0, this might indicate an issue")
+                
+            # Check if any files were successfully processed
+            if successful_files == 0:
+                logger.error(f"Lambda processed 0 files successfully. Failed files: {failed_files}")
+                raise Exception(f"No files could be added to the ZIP archive. All files failed processing.")
+            
             if not download_url:
                 # If Lambda didn't return a presigned URL, generate one
-                download_url = cls.get_presigned_url(bucket, output_key)
+                logger.info(f"Lambda didn't return presigned URL, generating one for key: {output_key}")
+                download_url = cls.get_presigned_url_for_zip(bucket, output_key)
+            else:
+                logger.info(f"Lambda returned presigned URL: {download_url}")
             
             expires_at = timezone.now() + timedelta(seconds=cls.URL_EXPIRY)
             
             return {
                 "download_url": download_url,
-                "zip_size": response_payload.get('zip_size', 0),
+                "zip_size": zip_size,
                 "file_count": len(file_list),
+                "successful_files": successful_files,
+                "failed_files": len(failed_files),
                 "expires_at": expires_at
             }
             

@@ -11,7 +11,7 @@ logger.setLevel(logging.INFO)
 
 s3_client = boto3.client('s3')
 
-def get_file_extension(key):
+def get_file_extension(key, bucket):
     """Extract file extension from S3 key or content type"""
     # First try to get extension from the key
     ext = os.path.splitext(key)[1]
@@ -20,7 +20,7 @@ def get_file_extension(key):
     
     # If no extension in key, try to determine from content type
     try:
-        response = s3_client.head_object(Bucket=source_bucket, Key=key)
+        response = s3_client.head_object(Bucket=bucket, Key=key)
         content_type = response.get('ContentType', '')
         if content_type:
             # Map common content types to extensions
@@ -44,6 +44,15 @@ def get_file_extension(key):
 def lambda_handler(event, context):
     """
     AWS Lambda function to create a ZIP archive from S3 objects
+    
+    Current implementation uses in-memory processing which is optimal for:
+    - Up to 100 files of average size (1-10MB each)
+    - Total uncompressed size < 500MB
+    
+    For larger workloads, consider using /tmp ephemeral storage:
+    - Individual files > 50MB
+    - Total size > 1GB
+    - Memory optimization needed
     
     Expected event structure:
     {
@@ -88,12 +97,20 @@ def lambda_handler(event, context):
         # Create in-memory ZIP file
         zip_buffer = io.BytesIO()
         
+        # Alternative for very large files (uncomment to use /tmp ephemeral storage):
+        # import tempfile
+        # temp_zip_path = '/tmp/archive.zip'
+        # zip_file_obj = zipfile.ZipFile(temp_zip_path, 'w', zipfile.ZIP_DEFLATED)
+        
+        successful_files = 0
+        failed_files = []
+        
         with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
             # Add each file to the ZIP
             for file_info in files:
                 key = file_info['key']
                 # Get the file extension
-                ext = get_file_extension(key)
+                ext = get_file_extension(key, source_bucket)
                 
                 # Use provided filename or default to basename of key
                 filename = file_info.get('filename', os.path.basename(key))
@@ -110,14 +127,20 @@ def lambda_handler(event, context):
                     
                     # Add to ZIP
                     zip_file.writestr(filename, file_content)
+                    successful_files += 1
                 except Exception as e:
                     logger.error(f"Error adding {key} to ZIP: {str(e)}")
+                    failed_files.append({"key": key, "filename": filename, "error": str(e)})
                     # Continue with other files instead of failing completely
                     continue
         
         # Get the ZIP data and size
         zip_data = zip_buffer.getvalue()
         zip_size = len(zip_data)
+        
+        # Check if any files were successfully added
+        if successful_files == 0:
+            raise Exception(f"No files could be added to ZIP archive. All {len(files)} files failed.")
         
         # Upload ZIP to S3
         logger.info(f"Uploading ZIP ({zip_size} bytes) to {output_bucket}/{output_key}")
@@ -133,8 +156,15 @@ def lambda_handler(event, context):
             "output_bucket": output_bucket,
             "output_key": output_key,
             "zip_size": zip_size,
-            "file_count": len(files)
+            "file_count": len(files),
+            "successful_files": successful_files,
+            "failed_files": failed_files
         }
+        
+        # Log summary
+        logger.info(f"ZIP creation completed: {successful_files}/{len(files)} files successful")
+        if failed_files:
+            logger.warning(f"Failed to add {len(failed_files)} files to ZIP: {[f['key'] for f in failed_files]}")
         
         # Generate presigned URL if requested
         if generate_url:
