@@ -54,6 +54,7 @@ from .schemas import (
     BoardCreateSchema,
     BoardUpdateSchema,
     BoardOutSchema,
+    BoardAncestorSchema,
     DownloadInitiateSchema,
     DownloadResponseSchema,
     AssetBulkTagsSchema,
@@ -1234,7 +1235,7 @@ def get_board(request, workspace_id: UUID, board_id: UUID):
     )
     return board
 
-@router.get("/workspaces/{uuid:workspace_id}/boards/{uuid:board_id}/ancestors", response=List[BoardOutSchema])
+@router.get("/workspaces/{uuid:workspace_id}/boards/{uuid:board_id}/ancestors", response=List[BoardAncestorSchema])
 @decorate_view(check_workspace_permission(WorkspaceMember.Role.COMMENTER))
 def get_board_ancestors(request, workspace_id: UUID, board_id: UUID):
     """Get all ancestor boards up to root"""

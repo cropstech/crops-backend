@@ -147,6 +147,10 @@ class BoardUpdateSchema(Schema):
     kanban_group_by_field_id: Optional[int] = None
     default_sort: Optional[str] = None
 
+class BoardAncestorSchema(Schema):
+    id: UUID
+    name: str
+
 class BoardOutSchema(Schema):
     id: UUID
     name: str
@@ -164,6 +168,7 @@ class BoardOutSchema(Schema):
     kanban_group_by_field_id: Optional[int] = None
     kanban_group_by_field: Optional['CustomFieldSchema'] = None
     default_sort: str
+    ancestors: Optional[List[BoardAncestorSchema]] = None
     
     model_config = ConfigDict(
         from_attributes=True
@@ -181,6 +186,10 @@ class BoardOutSchema(Schema):
     @staticmethod
     def resolve_kanban_group_by_field(obj):
         return obj.get_effective_kanban_group_by_field()
+    
+    @staticmethod
+    def resolve_ancestors(obj):
+        return obj.get_ancestors()
 
 class DownloadInitiateSchema(Schema):
     asset_id: UUID
