@@ -76,6 +76,8 @@ from .schemas import (
     CustomFieldOptionUpdate,
     CustomFieldValueSchema,
     CustomFieldValueCreate,
+    CustomFieldValueBulkCreate,
+    CustomFieldValueBulkResponse,
     AIActionResultSchema,
     CustomFieldOptionAIActionSchema,
     CustomFieldOptionAIActionCreate,
@@ -1797,82 +1799,121 @@ def get_board_field_values(request, workspace_id: UUID, board_id: UUID):
         'option_value'
     ).prefetch_related('multi_options')
 
-@router.post("/workspaces/{uuid:workspace_id}/custom-fields/{int:field_id}/values", response=CustomFieldValueSchema)
+@router.post("/workspaces/{uuid:workspace_id}/field-values/{int:field_id}", response=CustomFieldValueBulkResponse)
 @decorate_view(check_workspace_permission(WorkspaceMember.Role.EDITOR))
-def set_field_value(
+def set_field_values(
     request,
     workspace_id: UUID,
     field_id: int,
-    data: CustomFieldValueCreate
+    data: CustomFieldValueBulkCreate
 ):
-    """Set a custom field value for an asset or board with optional board context for AI actions"""
+    """
+    Set a custom field value for one or multiple assets at once.
+    Accepts array of asset IDs - works for single or multiple assets.
+    
+    Example usage:
+    - Single asset: {"asset_ids": ["c6dc5df8-5f28-4c05-a76e-75877a20fe8d"], "option_value_id": 123}
+    - Multiple assets: {"asset_ids": ["asset1", "asset2", "asset3"], "option_value_id": 123}
+    """
     workspace = get_object_or_404(Workspace, id=workspace_id)
     field = get_object_or_404(CustomField, workspace=workspace, id=field_id)
     
-    # Validate content type
-    if data.content_type not in ['asset', 'board']:
-        raise HTTPException(400, "Invalid content type")
+    # Get assets that belong to this workspace
+    assets = Asset.objects.filter(
+        workspace=workspace,
+        id__in=data.asset_ids
+    )
     
-    # Get the content type and object
-    model = Asset if data.content_type == 'asset' else Board
-    content_type_obj = ContentType.objects.get_for_model(model)
-    content_object = get_object_or_404(model, workspace=workspace, id=data.object_id)
+    if not assets.exists():
+        raise HttpError(404, "No valid assets found for the provided IDs")
     
     # Validate board context if provided
     board_context = None
     if data.board_id:
         board_context = get_object_or_404(Board, workspace=workspace, id=data.board_id)
         
-        # Validate that the asset belongs to the specified board
-        if data.content_type == 'asset':
-            asset_in_board = BoardAsset.objects.filter(
-                board=board_context, 
-                asset_id=data.object_id
-            ).exists()
-            if not asset_in_board:
-                raise HttpError(400, f"Asset does not belong to the specified board")
+        # Validate that all assets belong to the specified board
+        asset_ids_in_board = set(BoardAsset.objects.filter(
+            board=board_context, 
+            asset_id__in=data.asset_ids
+        ).values_list('asset_id', flat=True))
+        
+        invalid_assets = set(data.asset_ids) - asset_ids_in_board
+        if invalid_assets:
+            raise HttpError(400, f"Assets {list(invalid_assets)} do not belong to the specified board")
     
-    # Get or create the field value
-    field_value, created = CustomFieldValue.objects.get_or_create(
-        field=field,
-        content_type=content_type_obj,
-        object_id=data.object_id
-    )
+    content_type_obj = ContentType.objects.get_for_model(Asset)
+    updated_count = 0
+    errors = []
     
-    # Update the value based on field type
-    if field.field_type == 'TEXT':
-        field_value.text_value = data.text_value
-    elif field.field_type == 'DATE':
-        field_value.date_value = data.date_value
-    elif field.field_type == 'SINGLE_SELECT':
-        if data.option_value_id:
-            option = get_object_or_404(CustomFieldOption, field=field, id=data.option_value_id)
-            field_value.option_value = option
-    elif field.field_type == 'MULTI_SELECT':
-        if data.multi_option_ids:
-            options = CustomFieldOption.objects.filter(
-                field=field,
-                id__in=data.multi_option_ids
-            )
-            field_value.multi_options.set(options)
+    # Set flag to prevent signals from triggering during bulk operation
+    from main.services.ai_actions import _thread_local
+    _thread_local.api_triggered = True
     
-    # Set flag to prevent signal from triggering, then save
-    if field.field_type == 'SINGLE_SELECT' and field_value.option_value:
-        from main.services.ai_actions import _thread_local
-        _thread_local.api_triggered = True
+    try:
+        with transaction.atomic():
+            for asset in assets:
+                try:
+                    # Get or create the field value
+                    field_value, created = CustomFieldValue.objects.get_or_create(
+                        field=field,
+                        content_type=content_type_obj,
+                        object_id=asset.id
+                    )
+                    
+                    # Update the value based on field type
+                    if field.field_type == 'TEXT':
+                        field_value.text_value = data.text_value
+                    elif field.field_type == 'DATE':
+                        field_value.date_value = data.date_value
+                    elif field.field_type == 'SINGLE_SELECT':
+                        if data.option_value_id:
+                            option = get_object_or_404(CustomFieldOption, field=field, id=data.option_value_id)
+                            field_value.option_value = option
+                        else:
+                            field_value.option_value = None
+                    elif field.field_type == 'MULTI_SELECT':
+                        if data.multi_option_ids:
+                            options = CustomFieldOption.objects.filter(
+                                field=field,
+                                id__in=data.multi_option_ids
+                            )
+                            field_value.multi_options.set(options)
+                        else:
+                            field_value.multi_options.clear()
+                    
+                    field_value.save()
+                    updated_count += 1
+                    
+                except Exception as e:
+                    errors.append(f"Asset {asset.id}: {str(e)}")
+                    logger.error(f"Error updating field value for asset {asset.id}: {str(e)}")
+        
+        # Trigger AI actions after successful bulk update (if applicable)
+        if field.field_type == 'SINGLE_SELECT' and data.option_value_id:
+            from main.services.ai_actions import trigger_ai_actions
+            for asset in assets:
+                try:
+                    field_value = CustomFieldValue.objects.get(
+                        field=field,
+                        content_type=content_type_obj,
+                        object_id=asset.id
+                    )
+                    if field_value.option_value:
+                        trigger_ai_actions(field_value, board_context)
+                except Exception as e:
+                    logger.error(f"Error triggering AI actions for asset {asset.id}: {str(e)}")
     
-    field_value.save()
+    finally:
+        # Clean up the flag
+        _thread_local.api_triggered = False
     
-    # Trigger AI actions with board context if applicable
-    if field.field_type == 'SINGLE_SELECT' and field_value.option_value:
-        from main.services.ai_actions import trigger_ai_actions
-        try:
-            trigger_ai_actions(field_value, board_context)
-        finally:
-            # Clean up the flag
-            _thread_local.api_triggered = False
-    
-    return field_value
+    return {
+        "success": len(errors) == 0,
+        "updated_count": updated_count,
+        "failed_count": len(errors),
+        "errors": errors
+    }
 
 @router.get("/workspaces/{uuid:workspace_id}/ai-actions/available", response=List[Dict])
 @decorate_view(check_workspace_permission(WorkspaceMember.Role.COMMENTER))

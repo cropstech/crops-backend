@@ -468,6 +468,27 @@ class CustomFieldValueCreate(Schema):
     option_value_id: Optional[int] = None
     multi_option_ids: List[int] = []
 
+class CustomFieldValueBulkCreate(Schema):
+    """
+    Schema for setting custom field values on multiple assets at once.
+    Accepts array of asset IDs - works for single or multiple assets.
+    """
+    asset_ids: List[UUID] = Field(..., description="Array of asset IDs to update")
+    board_id: Optional[UUID] = Field(None, description="Board context for AI actions")
+    
+    # Value fields - support all field types (same as CustomFieldValueCreate)
+    text_value: Optional[str] = Field(None, description="Value for TEXT fields")
+    date_value: Optional[datetime] = Field(None, description="Value for DATE fields")
+    option_value_id: Optional[int] = Field(None, description="Option ID for SINGLE_SELECT fields")
+    multi_option_ids: List[int] = Field(default=[], description="Option IDs for MULTI_SELECT fields")
+
+class CustomFieldValueBulkResponse(Schema):
+    """Response schema for bulk custom field value updates"""
+    success: bool
+    updated_count: int
+    failed_count: int = 0
+    errors: List[str] = []
+
 # Field Configuration Schemas
 class FieldOptionAIAction(Schema):
     """
