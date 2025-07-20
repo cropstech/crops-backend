@@ -3,7 +3,7 @@ from django.db import models
 from main.models import (
     Workspace, WorkspaceMember, Asset, AssetAnalysis, AssetCheckerAnalysis, Board, BoardAsset,
     CustomField, CustomFieldOption, CustomFieldValue, AIActionResult,
-    CustomFieldOptionAIAction, Comment, Subscription, NotificationPreference, EmailBatch, BoardFollower, BoardExplicitUnfollow, UserNotificationPreference
+    CustomFieldOptionAIAction, Comment, Subscription, NotificationPreference, EmailBatch, BoardFollower, BoardExplicitUnfollow, UserNotificationPreference, Tag
 )
 
 # Register your models here.
@@ -108,6 +108,16 @@ class AIActionResultAdmin(admin.ModelAdmin):
     ordering = ['-created_at']
     readonly_fields = ('created_at', 'completed_at')
 
+class TagAdmin(admin.ModelAdmin):
+    list_display = ('name', 'workspace', 'asset_count')
+    search_fields = ['name', 'workspace__name']
+    list_filter = ['workspace']
+    filter_horizontal = ['assets']
+    
+    def asset_count(self, obj):
+        return obj.assets.count()
+    asset_count.short_description = 'Asset Count'
+
 admin.site.register(Workspace, WorkspaceAdmin)
 admin.site.register(WorkspaceMember, WorkspaceMemberAdmin)
 admin.site.register(Asset, AssetAdmin)
@@ -119,6 +129,7 @@ admin.site.register(CustomField, CustomFieldAdmin)
 admin.site.register(CustomFieldOption, CustomFieldOptionAdmin)
 admin.site.register(CustomFieldValue, CustomFieldValueAdmin)
 admin.site.register(AIActionResult, AIActionResultAdmin)
+admin.site.register(Tag, TagAdmin)
 
 admin.site.register(CustomFieldOptionAIAction)
 
