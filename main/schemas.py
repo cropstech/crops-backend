@@ -255,6 +255,7 @@ class AssetSchema(Schema):
     created_by: Optional[UserSchema] = None
     favorite: bool
     boards: Optional[List[BoardOutSchema]] = None
+    tags: Optional[List[str]] = None
     model_config = ConfigDict(
         from_attributes=True
     )
@@ -278,6 +279,11 @@ class AssetSchema(Schema):
             # Get the full path and remove the filename
             return dirname(obj.file.name)
         return None
+
+    @staticmethod
+    def resolve_tags(obj):
+        """Get tag names from the Tag relationship"""
+        return [tag.name for tag in obj.tags.all()]
 
 class PaginationSchema(Schema):
     """Pagination metadata for paginated responses"""
@@ -1022,8 +1028,20 @@ class CustomFieldFilter(Schema):
     id: int = Field(..., description="Custom field ID")
     filter: CustomFieldFilterValue = Field(..., description="Filter criteria for this field")
 
+class TagSchema(Schema):
+    """Schema for Tag model"""
+    id: int
+    name: str
+    asset_count: int
+    model_config = ConfigDict(from_attributes=True)
+
+    @staticmethod
+    def resolve_asset_count(obj):
+        """Get the number of assets with this tag"""
+        return obj.assets.count()
+
 class TagFilter(Schema):
-    """Filter for tags (for future implementation)"""
+    """Filter for tags"""
     includes: Optional[List[str]] = Field(None, description="Assets must include all of these tags")
     excludes: Optional[List[str]] = Field(None, description="Assets must not include any of these tags")
 

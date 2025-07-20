@@ -35,6 +35,7 @@ from .models import (
     CustomFieldOption,
     CustomFieldOptionAIAction,
     CustomFieldValue,
+    Tag,
     UserNotificationPreference,
     ShareLink,
     Workspace,
@@ -89,7 +90,8 @@ from .schemas import (
     UserNotificationPreferenceUpdate,
     NotificationSchema,
     AssetListFilters,
-    PaginatedAssetResponse
+    PaginatedAssetResponse,
+    TagSchema
 )
 from .utils import (
     send_invitation_email, process_file_metadata, process_file_metadata_background, 
@@ -783,8 +785,8 @@ def list_assets(
     # Calculate offset
     offset = (filters.page - 1) * filters.page_size
     
-    # Base query with prefetched boards
-    query = Asset.objects.filter(workspace_id=workspace_id).prefetch_related('boards')
+    # Base query with prefetched boards and tags
+    query = Asset.objects.filter(workspace_id=workspace_id).prefetch_related('boards', 'tags')
     
     # Filter by board if specified
     board = None
@@ -875,12 +877,15 @@ def list_assets(
         if filters.date_uploaded_to:
             query = query.filter(date_uploaded__lte=filters.date_uploaded_to)
     
-    # TODO: Implement tag filtering when tags are ready
-    # if filters.tags:
-    #     if filters.tags.includes:
-    #         query = query.filter(tags__name__in=filters.tags.includes)
-    #     if filters.tags.excludes:
-    #         query = query.exclude(tags__name__in=filters.tags.excludes)
+    # Apply tag filtering
+    if filters.tags:
+        if filters.tags.includes:
+            # Assets must have ALL of the included tags
+            for tag_name in filters.tags.includes:
+                query = query.filter(tags__name=tag_name)
+        if filters.tags.excludes:
+            # Assets must not have ANY of the excluded tags
+            query = query.exclude(tags__name__in=filters.tags.excludes)
     
     # Determine the sort order
     order_by = filters.order_by
@@ -1324,7 +1329,7 @@ def initiate_download(request, workspace_id: UUID, asset_id: UUID, data: Downloa
 @router.post("/workspaces/{uuid:workspace_id}/assets/bulk/tags")
 @decorate_view(check_workspace_permission(WorkspaceMember.Role.EDITOR))
 def bulk_update_tags(request, workspace_id: UUID, data: AssetBulkTagsSchema):
-    """Update tags for multiple assets"""
+    """Update tags for multiple assets using the Tag model"""
     workspace = get_object_or_404(Workspace, id=workspace_id)
     
     # Get assets that belong to this workspace
@@ -1333,13 +1338,30 @@ def bulk_update_tags(request, workspace_id: UUID, data: AssetBulkTagsSchema):
         id__in=data.asset_ids
     )
     
+    # Get or create Tag objects for the workspace
+    tag_objects = []
+    for tag_name in data.tags:
+        tag, created = Tag.objects.get_or_create(
+            name=tag_name.strip(),
+            workspace=workspace
+        )
+        tag_objects.append(tag)
+    
     # Update tags for each asset
     for asset in assets:
-        asset.metadata = asset.metadata or {}
-        asset.metadata["tags"] = data.tags
-        asset.save()
+        # Clear existing tags and set new ones
+        asset.tags.set(tag_objects)
     
     return {"success": True, "updated_count": assets.count()}
+
+@router.get("/workspaces/{uuid:workspace_id}/tags", response=List[TagSchema])
+@decorate_view(check_workspace_permission(WorkspaceMember.Role.COMMENTER))
+def list_workspace_tags(request, workspace_id: UUID):
+    """Get all tags in a workspace with asset counts"""
+    workspace = get_object_or_404(Workspace, id=workspace_id)
+    
+    tags = Tag.objects.filter(workspace=workspace).prefetch_related('assets').order_by('name')
+    return list(tags)
 
 @router.post("/workspaces/{uuid:workspace_id}/assets/bulk/favorite")
 @decorate_view(check_workspace_permission(WorkspaceMember.Role.COMMENTER))
