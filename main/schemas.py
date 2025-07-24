@@ -271,6 +271,7 @@ class AssetSchema(Schema):
     favorite: bool
     boards: Optional[List[BoardOutSchema]] = None
     tags: Optional[List[str]] = None
+    ai_tags: Optional[List[str]] = None
     model_config = ConfigDict(
         from_attributes=True
     )
@@ -298,7 +299,12 @@ class AssetSchema(Schema):
     @staticmethod
     def resolve_tags(obj):
         """Get tag names from the Tag relationship"""
-        return [tag.name for tag in obj.tags.all()]
+        return [tag.name for tag in obj.get_manual_tags()]
+    
+    @staticmethod
+    def resolve_ai_tags(obj):
+        """Get AI tag names from the Tag relationship"""
+        return [tag.name for tag in obj.get_ai_label_tags()]
 
 class PaginationSchema(Schema):
     """Pagination metadata for paginated responses"""

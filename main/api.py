@@ -1384,7 +1384,7 @@ def list_workspace_tags(request, workspace_id: UUID):
     """Get all tags in a workspace with asset counts"""
     workspace = get_object_or_404(Workspace, id=workspace_id)
     
-    tags = Tag.objects.filter(workspace=workspace).prefetch_related('assets').order_by('name')
+    tags = Tag.objects.filter(workspace=workspace, is_ai_generated=False).prefetch_related('assets').order_by('name')
     return list(tags)
 
 @router.post("/workspaces/{uuid:workspace_id}/assets/bulk/favorite")
