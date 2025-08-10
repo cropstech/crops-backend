@@ -107,11 +107,13 @@ WSGI_APPLICATION = 'crops.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/3.2/ref/settings/#databases
 
+# Prefer DATABASE_URL when provided (e.g., to connect to Postgres), otherwise fallback to local sqlite
+# Note: default must be a URL string for django-environ, not a dict
 DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
-    }
+    'default': env.db(
+        'DATABASE_URL',
+        default='sqlite:///' + str(BASE_DIR / 'db.sqlite3'),
+    )
 }
 
 AUTH_USER_MODEL = 'users.CustomUser'

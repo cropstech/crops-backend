@@ -1060,10 +1060,10 @@ class NotificationSchema(Schema):
 class CustomFieldFilterValue(Schema):
     """Filter for a specific custom field value"""
     is_: Optional[int] = Field(None, alias="is", description="Filter by specific option ID (for single/multi-select fields)")
-    not_set: Optional[bool] = Field(None, alias="notSet", description="Filter for fields that have no value set")
+    not_set: Optional[bool] = Field(None, description="Filter for fields that have no value set")
     contains: Optional[str] = Field(None, description="Text contains filter (for text fields)")
-    date_from: Optional[datetime] = Field(None, alias="dateFrom", description="Date range start (for date fields)")
-    date_to: Optional[datetime] = Field(None, alias="dateTo", description="Date range end (for date fields)")
+    date_from: Optional[datetime] = Field(None, description="Date range start (for date fields)")
+    date_to: Optional[datetime] = Field(None, description="Date range end (for date fields)")
 
 class CustomFieldFilter(Schema):
     """Filter configuration for a custom field"""
@@ -1094,14 +1094,14 @@ class AssetListFilters(Schema):
     page_size: int = Field(10, description="Number of items per page")
     order_by: str = Field("-date_uploaded", description="Sort field (prefix with - for descending)")
     search: Optional[str] = Field(None, description="Search term for file names")
-    board_id: Optional[UUID] = Field(None, alias="boardId", description="Filter by specific board")
+    board_id: Optional[UUID] = Field(None, description="Filter by specific board")
     
     # Filter options
-    custom_fields: Optional[List[CustomFieldFilter]] = Field(None, alias="customFields", description="Custom field filters")
+    custom_fields: Optional[List[CustomFieldFilter]] = Field(None, description="Custom field filters")
     tags: Optional[TagFilter] = Field(None, description="Tag filters (future implementation)")
-    file_type: Optional[List[str]] = Field(None, alias="fileType", description="Filter by file types (IMAGE, VIDEO, etc.)")
+    file_type: Optional[List[str]] = Field(None, description="Filter by file types (IMAGE, VIDEO, etc.)")
     favorite: Optional[bool] = Field(None, description="Filter by favorite status")
-    date_uploaded_from: Optional[datetime] = Field(None, alias="dateUploadedFrom", description="Uploaded after this date")
-    date_uploaded_to: Optional[datetime] = Field(None, alias="dateUploadedTo", description="Uploaded before this date")
+    date_uploaded_from: Optional[datetime] = Field(None, description="Uploaded after this date")
+    date_uploaded_to: Optional[datetime] = Field(None, description="Uploaded before this date")
 
 

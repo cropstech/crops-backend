@@ -26,9 +26,12 @@ venv/
 env/
 ENV/
 .env
+.env.production
 .venv
 env.bak/
 venv.bak/
+container-bk.json
+containers.json
 
 # Django
 *.log

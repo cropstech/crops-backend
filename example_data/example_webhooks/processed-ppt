@@ -1,0 +1,54 @@
+{
+    'asset_id': '11941839-5efb-4cf4-8fda-164dac510ae4',
+    'original': {
+        'bucket': 'crops-input',
+        'key': 'media/workspaces/72153500-4fc6-495e-9daf-479cd07b1c7b/assets/11941839-5efb-4cf4-8fda-164dac510ae4/file_example_PPT_1MB.ppt'
+    },
+    'processed': {
+        'pdf': {
+            'bucket': 'crops-output',
+            'key': 'media/workspaces/72153500-4fc6-495e-9daf-479cd07b1c7b/assets/11941839-5efb-4cf4-8fda-164dac510ae4/file_example_PPT_1MB.pdf'
+        },
+        'thumbnail_pages': [{
+            'page': 1,
+            'bucket': 'crops-output',
+            'key': 'media/workspaces/72153500-4fc6-495e-9daf-479cd07b1c7b/assets/11941839-5efb-4cf4-8fda-164dac510ae4/thumbnail_page_1.jpg'
+        }, {
+            'page': 2,
+            'bucket': 'crops-output',
+            'key': 'media/workspaces/72153500-4fc6-495e-9daf-479cd07b1c7b/assets/11941839-5efb-4cf4-8fda-164dac510ae4/thumbnail_page_2.jpg'
+        }, {
+            'page': 3,
+            'bucket': 'crops-output',
+            'key': 'media/workspaces/72153500-4fc6-495e-9daf-479cd07b1c7b/assets/11941839-5efb-4cf4-8fda-164dac510ae4/thumbnail_page_3.jpg'
+        }, {
+            'page': 4,
+            'bucket': 'crops-output',
+            'key': 'media/workspaces/72153500-4fc6-495e-9daf-479cd07b1c7b/assets/11941839-5efb-4cf4-8fda-164dac510ae4/thumbnail_page_4.jpg'
+        }],
+        'thumbnail': {
+            'bucket': 'crops-output',
+            'key': 'media/workspaces/72153500-4fc6-495e-9daf-479cd07b1c7b/assets/11941839-5efb-4cf4-8fda-164dac510ae4/thumbnail.jpg'
+        },
+        'original': {
+            'bucket': 'crops-output',
+            'key': 'media/workspaces/72153500-4fc6-495e-9daf-479cd07b1c7b/assets/11941839-5efb-4cf4-8fda-164dac510ae4/file_example_PPT_1MB.ppt'
+        }
+    },
+    'metadata': {
+        'original_format': 'ppt',
+        'pages': 4,
+        'title': '',
+        'author': '',
+        'subject': '',
+        'creator': 'Impress',
+        'producer': 'LibreOffice 7.6',
+        'creation_date': 'Thu Aug  7 21:40:08 2025 UTC',
+        'modification_date': '',
+        'file_size': 566199
+    },
+    'status': 'completed',
+    'timestamp': '2025-08-07T21:40:14.348739',
+    'file_type': 'document',
+    'document_type': 'ppt'
+}

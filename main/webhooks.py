@@ -76,9 +76,9 @@ def asset_processed_webhook(request):
         except json.JSONDecodeError:
             logger.error("Invalid JSON in webhook request body")
             raise HttpError(400, "Invalid JSON in request body")
-
+        
         logger.info(f"Received webhook for asset processing")
-        # logger.info(f"Body: {body}")
+        logger.info(f"Body: {body}")
         
         # Validate required fields
         asset_id = body.get('asset_id')
@@ -108,27 +108,29 @@ def asset_processed_webhook(request):
                 asset.metadata = metadata_from_webhook
             
             # Extract dimensions for specific fields if needed
-            if 'image' in metadata_from_webhook and 'dimensions' in metadata_from_webhook['image']:
+            if 'image' in metadata_from_webhook and isinstance(metadata_from_webhook['image'], dict) and 'dimensions' in metadata_from_webhook['image']:
                 dimensions = metadata_from_webhook['image']['dimensions']
-                if dimensions.get('width') is not None:
-                    asset.width = dimensions['width']
-                if dimensions.get('height') is not None:
-                    asset.height = dimensions['height']
+                if isinstance(dimensions, dict):
+                    if dimensions.get('width') is not None:
+                        asset.width = dimensions['width']
+                    if dimensions.get('height') is not None:
+                        asset.height = dimensions['height']
                     
             # Extract dimensions and other video-specific fields from streams
-            if 'streams' in metadata_from_webhook:
+            if 'streams' in metadata_from_webhook and isinstance(metadata_from_webhook['streams'], list):
                 for stream in metadata_from_webhook['streams']:
-                    if stream.get('type') == 'video':
+                    if isinstance(stream, dict) and stream.get('type') == 'video':
                         dimensions = stream.get('dimensions', {})
-                        if dimensions.get('width') is not None:
-                            asset.width = dimensions['width']
-                        if dimensions.get('height') is not None:
-                            asset.height = dimensions['height']
-                        if stream.get('codec', {}).get('name') is not None:
+                        if isinstance(dimensions, dict):
+                            if dimensions.get('width') is not None:
+                                asset.width = dimensions['width']
+                            if dimensions.get('height') is not None:
+                                asset.height = dimensions['height']
+                        if isinstance(stream.get('codec'), dict) and stream.get('codec', {}).get('name') is not None:
                             asset.mime_type = f"video/{stream['codec']['name']}"
             
             # Update format data if available
-            if 'format' in metadata_from_webhook:
+            if 'format' in metadata_from_webhook and isinstance(metadata_from_webhook['format'], dict):
                 format_data = metadata_from_webhook['format']
                 if format_data.get('size') is not None:
                     asset.size = format_data['size']
@@ -142,14 +144,18 @@ def asset_processed_webhook(request):
 
             
             # Update mime type from codec if available
-            if 'image' in metadata_from_webhook and 'codec' in metadata_from_webhook['image']:
+            if 'image' in metadata_from_webhook and isinstance(metadata_from_webhook['image'], dict) and 'codec' in metadata_from_webhook['image']:
                 codec = metadata_from_webhook['image']['codec']
-                if codec.get('name') is not None:
+                if isinstance(codec, dict) and codec.get('name') is not None:
                     asset.mime_type = f"image/{codec['name']}"
             
             # Extract thumbnails/processed versions
             thumbnails = []
             for version, file_info in processed_files.items():
+                # Skip non-dictionary values (like arrays)
+                if not isinstance(file_info, dict):
+                    continue
+                    
                 if version in ['thumbnail', 'medium', 'large']:
                     bucket = file_info.get('bucket')
                     key = file_info.get('key')
@@ -160,7 +166,7 @@ def asset_processed_webhook(request):
                 asset.thumbnails = thumbnails
             
             # Store analysis data if available
-            if analysis_data:
+            if analysis_data and isinstance(analysis_data, dict):
                 # Create or update the AssetAnalysis record
                 analysis, created = AssetAnalysis.objects.update_or_create(
                     asset=asset,

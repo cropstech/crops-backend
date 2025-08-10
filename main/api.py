@@ -2092,11 +2092,8 @@ def create_comment(request, workspace_id: UUID, data: CommentCreate):
         
         # Validate that the asset belongs to the specified board
         if data.content_type == 'asset':
-            asset_in_board = BoardAsset.objects.filter(
-                board=board, 
-                asset_id=data.object_id
-            ).exists()
-            if not asset_in_board:
+            asset = get_object_or_404(Asset, workspace=workspace, id=data.object_id)
+            if not asset.boards.filter(id=board.id).exists():
                 raise HttpError(400, f"Asset does not belong to the specified board")
     
     # Validate annotation data

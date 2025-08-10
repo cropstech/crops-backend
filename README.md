@@ -25,6 +25,75 @@ Create a `.env` file in the root directory with:
 
 
 
+## Running Docker locally
+
+### Prerequisites
+- Docker Desktop installed and running
+
+### 1) Create a local `.env`
+Add minimal variables required by Django settings:
+
+```bash
+# Core
+DJANGO_DEBUG=True
+SECRET_KEY=dev-secret
+FRONTEND_URL=http://localhost:9000
+STATIC_URL=/static/
+
+# S3/storage (dummy values for local)
+S3_ACCESS_KEY_ID=dummy
+S3_SECRET_ACCESS_KEY=dummy
+AWS_STORAGE_BUCKET_NAME=dummy
+AWS_STORAGE_CDN_BUCKET_NAME=dummy
+AWS_S3_LOCATION=us-east-2
+AWS_S3_CUSTOM_DOMAIN=localhost
+
+# Email (dummy)
+AWS_SES_ACCESS_KEY_ID=dummy
+AWS_SES_SECRET_ACCESS_KEY=dummy
+```
+
+### 2) Build and start the stack
+```bash
+docker compose up --build
+```
+This starts:
+- PostgreSQL on 5432
+- Redis on 6379
+- Django on http://localhost:8000
+- Celery worker and Celery beat
+
+### 3) Apply migrations and create a superuser
+```bash
+docker compose exec web python manage.py migrate
+docker compose exec web python manage.py createsuperuser
+```
+
+Open http://localhost:8000
+
+### Useful commands
+- View logs:
+  ```bash
+  docker compose logs -f web
+  docker compose logs -f celery
+  docker compose logs -f redis
+  ```
+- Stop services:
+  ```bash
+  docker compose down
+  ```
+- Reset data volumes (Postgres/Redis):
+  ```bash
+  docker compose down -v
+  ```
+
+Notes:
+- If ports 5432/6379/8000 are in use, change them in `docker-compose.yml` or stop the conflicting services.
+- For a lighter run without background jobs:
+  ```bash
+  docker compose up db redis web
+  ```
+
 ## Paddle Integration
 
 ### Syncing Data from Paddle

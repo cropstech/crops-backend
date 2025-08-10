@@ -1,0 +1,137 @@
+{
+    'asset_id': '6982721c-f965-4644-aae6-e44dd08f0cfc',
+    'original': {
+        'bucket': 'crops-input',
+        'key': 'media/workspaces/72153500-4fc6-495e-9daf-479cd07b1c7b/assets/6982721c-f965-4644-aae6-e44dd08f0cfc/file_example_OGG_640_2_7mg.ogg'
+    },
+    'processed': {
+        'web': {
+            'bucket': 'crops-output',
+            'key': 'media/workspaces/72153500-4fc6-495e-9daf-479cd07b1c7b/assets/6982721c-f965-4644-aae6-e44dd08f0cfc/web.mp4'
+        },
+        'preview': {
+            'bucket': 'crops-output',
+            'key': 'media/workspaces/72153500-4fc6-495e-9daf-479cd07b1c7b/assets/6982721c-f965-4644-aae6-e44dd08f0cfc/preview.mp4'
+        },
+        'thumbnail': {
+            'bucket': 'crops-output',
+            'key': 'media/workspaces/72153500-4fc6-495e-9daf-479cd07b1c7b/assets/6982721c-f965-4644-aae6-e44dd08f0cfc/thumbnail.jpg'
+        },
+        'original': {
+            'bucket': 'crops-output',
+            'key': 'media/workspaces/72153500-4fc6-495e-9daf-479cd07b1c7b/assets/6982721c-f965-4644-aae6-e44dd08f0cfc/file_example_OGG_640_2_7mg.ogg'
+        }
+    },
+    'metadata': {
+        'format': {
+            'name': 'ogg',
+            'duration': 30.528,
+            'size': 2702630,
+            'bit_rate': 708236,
+            'probe_score': 100,
+            'tags': {},
+            'start_time': '0.000000',
+            'creation_time': ''
+        },
+        'streams': [{
+            'type': 'video',
+            'codec': {
+                'name': 'theora',
+                'long_name': 'Theora',
+                'profile': '',
+                'tag_string': '[0][0][0][0]'
+            },
+            'dimensions': {
+                'width': 640,
+                'height': 360,
+                'sample_aspect_ratio': '1:1',
+                'display_aspect_ratio': '16:9'
+            },
+            'frame_rate': {
+                'raw': '30/1',
+                'avg': '30/1',
+                'computed': 30.0
+            },
+            'bit_depth': 8,
+            'color': {
+                'space': '',
+                'transfer': '',
+                'primaries': '',
+                'range': ''
+            },
+            'level': -99,
+            'is_avc': '',
+            'nal_length_size': '',
+            'tags': {
+                'creation_time': '2015-08-07 09:13:05',
+                'language': 'und',
+                'handler_name': 'L-SMASH Video Handler',
+                'encoder': 'Lavc56.26.100 libtheora',
+                'major_brand': 'mp42',
+                'minor_version': '0',
+                'compatible_brands': 'mp42mp41isomavc1'
+            }
+        }, {
+            'type': 'audio',
+            'codec': {
+                'name': 'vorbis',
+                'long_name': 'Vorbis',
+                'profile': ''
+            },
+            'sample': {
+                'fmt': 'fltp',
+                'rate': '48000',
+                'channels': 2,
+                'channel_layout': 'stereo'
+            },
+            'bit_rate': '112000',
+            'tags': {
+                'creation_time': '2015-08-07 09:13:05',
+                'language': 'und',
+                'handler_name': 'L-SMASH Audio Handler',
+                'encoder': 'Lavc56.26.100 libvorbis',
+                'major_brand': 'mp42',
+                'minor_version': '0',
+                'compatible_brands': 'mp42mp41isomavc1'
+            }
+        }],
+        'chapters': []
+    },
+    'analysis': {
+        'top_labels': [{
+            'name': 'Astronomy',
+            'count': 6
+        }, {
+            'name': 'Outer Space',
+            'count': 6
+        }, {
+            'name': 'Planet',
+            'count': 6
+        }, {
+            'name': 'Earth',
+            'count': 6
+        }, {
+            'name': 'Globe',
+            'count': 6
+        }, {
+            'name': 'Moon',
+            'count': 6
+        }, {
+            'name': 'Nature',
+            'count': 6
+        }, {
+            'name': 'Night',
+            'count': 6
+        }, {
+            'name': 'Outdoors',
+            'count': 6
+        }],
+        'moderation_labels': [],
+        'frame_analysis_location': {
+            'bucket': 'crops-output',
+            'key': 'metadata/6982721c-f965-4644-aae6-e44dd08f0cfc/frame_analysis.json'
+        }
+    },
+    'status': 'completed',
+    'timestamp': '2025-08-08T11:39:58.616127'
+}

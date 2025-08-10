@@ -15,14 +15,23 @@ Including another URLconf
 """
 from django.contrib import admin
 from django.urls import path
+from django.http import JsonResponse
+from django.views.decorators.csrf import csrf_exempt
 from .api import api, webhook_api
 
 from django_paddle_billing.urls import urlpatterns as paddle_billing_urls
+
+
+@csrf_exempt
+def health_check(request):
+    """Health check endpoint for load balancer"""
+    return JsonResponse({"status": "healthy", "service": "crops-backend"})
 
 
 urlpatterns = [
     path('admin/', admin.site.urls),
     path("api/v1/", api.urls),
     path("webhooks/", webhook_api.urls),
+    path("", health_check, name="health_check"),  # Root health check endpoint
 ]
 urlpatterns += paddle_billing_urls

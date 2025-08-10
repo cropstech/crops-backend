@@ -1,0 +1,16 @@
+# Base requirements
+-r requirements.txt
+
+# Production-specific dependencies
+gunicorn==21.2.0
+psycopg2-binary==2.9.9
+dj-database-url==2.1.0
+django-redis==5.4.0
+python-json-logger==2.0.7
+
+# Health checks and monitoring
+django-health-check==3.17.0
+
+# Security enhancements
+django-csp==3.8
+django-ratelimit==4.1.0
