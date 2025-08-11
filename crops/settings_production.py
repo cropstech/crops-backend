@@ -7,7 +7,8 @@ from .settings import *
 import dj_database_url
 
 # Override base settings for production
-DEBUG = False
+# Single source of truth: respect DEBUG env, but ensure security defaults
+DEBUG = env.bool('DEBUG', default=False)
 
 # Security settings
 SECRET_KEY = env('SECRET_KEY')
@@ -128,7 +129,6 @@ FILE_UPLOAD_MAX_MEMORY_SIZE = 52428800  # 50MB
 # Production-specific AWS settings
 AWS_S3_OBJECT_PARAMETERS = {
     'CacheControl': 'max-age=86400',
-    'ACL': 'public-read',
 }
 
 # Disable browsable API in production

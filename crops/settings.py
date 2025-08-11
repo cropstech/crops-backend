@@ -24,7 +24,7 @@ environ.Env.read_env(os.path.join(BASE_DIR, ".env"))  # reading .env file
 
 env = environ.Env(
     # set casting, default value
-    DJANGO_DEBUG=(bool, True),
+    DEBUG=(bool, True),
     ALLOWED_HOSTS=(list, ['127.0.0.1', 'localhost']),
     FRONTEND_URL=(str, 'https://localhost:9000'),
     STATIC_URL=(str),
@@ -45,7 +45,7 @@ LAMBDA_AUTH_TOKEN = env('LAMBDA_AUTH_TOKEN')
 SECRET_KEY = 'django-insecure-@)x+#twgq_$q6-f$-_k2(3dsu6_&h-ydhft3a)idt*9pbyw_$l'
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = env('DJANGO_DEBUG')
+DEBUG = env('DEBUG')
 
 ALLOWED_HOSTS = env('ALLOWED_HOSTS')
 
@@ -227,7 +227,6 @@ STORAGES = {
             "secret_key": AWS_SECRET_ACCESS_KEY,
             "region_name": AWS_S3_REGION_NAME,
             "custom_domain": AWS_S3_CUSTOM_DOMAIN,
-            "default_acl": None,
             "file_overwrite": False,
             "location": "media",
         },
@@ -240,7 +239,6 @@ STORAGES = {
             "secret_key": AWS_SECRET_ACCESS_KEY,
             "region_name": AWS_S3_REGION_NAME,
             "custom_domain": AWS_S3_CUSTOM_DOMAIN,
-            "default_acl": None,
             "file_overwrite": True,
             "location": "static",
         },

@@ -35,7 +35,7 @@ Add minimal variables required by Django settings:
 
 ```bash
 # Core
-DJANGO_DEBUG=True
+DEBUG=True
 SECRET_KEY=dev-secret
 FRONTEND_URL=http://localhost:9000
 STATIC_URL=/static/

@@ -373,9 +373,13 @@ def generate_workspace_avatar(size=200):
                 "shape3Color": "ffd166"
             }
         )
-        # Save directly as PNG
+        
+        # Define the temporary path
+        temp_path = f"/tmp/{seed}.png"
+        
+        # Save directly as PNG to the temporary path
         av.save(
-            location=None,  # Current directory
+            location="/tmp",
             file_name=f"{seed}",
             file_format=DFormat.png,
             overwrite=True,
@@ -383,11 +387,11 @@ def generate_workspace_avatar(size=200):
         )
         
         # Read the saved file
-        with open(f"{seed}.png", 'rb') as f:
+        with open(temp_path, 'rb') as f:
             image_data = f.read()
             
         # Clean up the temporary file
-        os.remove(f"{seed}.png")
+        os.remove(temp_path)
         
         # Create a ContentFile from the image data
         return ContentFile(image_data, name=f'{seed}.png')
