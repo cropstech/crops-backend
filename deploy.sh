@@ -50,13 +50,22 @@ aws lightsail get-container-images --service-name ${SERVICE_NAME} --region ${REG
 }
 
 # Push web image and capture the reference
+# Capture combined stdout/stderr to ensure the reference hint is included
 WEB_PUSH_OUTPUT=$(aws lightsail push-container-image \
     --service-name ${SERVICE_NAME} \
     --label web \
     --image ${SERVICE_NAME}-web:latest \
     --region ${REGION} \
-    --profile ${AWS_PROFILE})
-LATEST_WEB=$(echo "$WEB_PUSH_OUTPUT" | grep "Refer to this image as" | sed 's/.*as "\([^"]*\)".*/\1/')
+    --profile ${AWS_PROFILE} 2>&1)
+LATEST_WEB=$(echo "$WEB_PUSH_OUTPUT" | awk -F '"' '/Refer to this image as/ {print $2; exit}')
+
+# Validate that we extracted a Lightsail image reference like ":crops-backend.web.N"
+if [ -z "$LATEST_WEB" ] || ! echo "$LATEST_WEB" | grep -Eq '^:[a-z0-9-]+\.web\.[0-9]+'; then
+    echo -e "${RED}❌ Failed to parse Lightsail image reference from push output.${NC}"
+    echo "$WEB_PUSH_OUTPUT"
+    exit 1
+fi
+echo -e "${GREEN}✅ Using web image reference: ${LATEST_WEB}${NC}"
 
 # Deploy the containers
 echo -e "${YELLOW}🚀 Deploying containers...${NC}"
@@ -64,6 +73,7 @@ echo -e "${YELLOW}🚀 Deploying containers...${NC}"
 # Update the containers.json with actual image references
 cp containers.json containers.json.bak
 sed -i '' "s|:crops-backend\.web\.latest|${LATEST_WEB}|g" containers.json
+echo -e "${YELLOW}🔧 Updated containers.json image to: ${LATEST_WEB}${NC}"
 # No celery references to update
 
 # Deploy the updated configuration
