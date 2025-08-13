@@ -1,0 +1,42 @@
+{
+  "serviceName": "crops-backend",
+  "containers": {
+    "web": {
+    "image": ":crops-backend.web.latest",
+      "ports": {
+        "8000": "HTTP"
+      },
+      "command": [
+        "gunicorn",
+        "--bind",
+        "0.0.0.0:8000",
+        "--workers",
+        "1",
+        "--timeout",
+        "120",
+        "--max-requests",
+        "0",
+        "--log-level",
+        "debug",
+        "--access-logfile",
+        "-",
+        "--error-logfile",
+        "-",
+        "--preload",
+        "crops.wsgi:application"
+      ]
+    }
+  },
+  "publicEndpoint": {
+    "containerName": "web",
+    "containerPort": 8000,
+    "healthCheck": {
+      "healthyThreshold": 2,
+      "unhealthyThreshold": 2,
+      "timeoutSeconds": 5,
+      "intervalSeconds": 30,
+      "path": "/admin",
+      "successCodes": "200-499"
+    }
+  }
+}
