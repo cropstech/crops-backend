@@ -25,6 +25,8 @@ services:
     ports:
       - "8000:8000"
     environment:
+      - ENV_FILE=/app/.env
+      - DJANGO_SETTINGS_MODULE=crops.settings
       - DEBUG=True
       - DATABASE_URL=postgres://crops_user:crops_password@db:5432/crops_db
     depends_on:

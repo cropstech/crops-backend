@@ -41,8 +41,8 @@ FRONTEND_URL=http://localhost:9000
 STATIC_URL=/static/
 
 # S3/storage (dummy values for local)
-S3_ACCESS_KEY_ID=dummy
-S3_SECRET_ACCESS_KEY=dummy
+AWS_ACCESS_KEY_ID=dummy
+AWS_SECRET_ACCESS_KEY=dummy
 AWS_STORAGE_BUCKET_NAME=dummy
 AWS_STORAGE_CDN_BUCKET_NAME=dummy
 AWS_S3_LOCATION=us-east-2
@@ -56,6 +56,8 @@ AWS_SES_SECRET_ACCESS_KEY=dummy
 ### 2) Build and start the stack
 ```bash
 docker compose up --build
+or 
+docker compose --env-file .env up
 ```
 This starts:
 - PostgreSQL on 5432

@@ -7,6 +7,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1
 
+# Default to production settings inside the container
+ENV DJANGO_SETTINGS_MODULE=crops.settings_production
+
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
     build-essential \

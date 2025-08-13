@@ -19,8 +19,17 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 import environ
 env = environ.Env()
-#environ.Env.read_env(os.path.join(root(), '.env'))  # reading .env file
-environ.Env.read_env(os.path.join(BASE_DIR, ".env"))  # reading .env file
+# Load environment from a specified file if provided, otherwise prefer .env.production then .env
+_env_file = os.environ.get("ENV_FILE")
+if _env_file and os.path.exists(_env_file):
+    environ.Env.read_env(_env_file)
+else:
+    env_prod = os.path.join(BASE_DIR, ".env.production")
+    env_dev = os.path.join(BASE_DIR, ".env")
+    if os.path.exists(env_prod):
+        environ.Env.read_env(env_prod)
+    elif os.path.exists(env_dev):
+        environ.Env.read_env(env_dev)
 
 env = environ.Env(
     # set casting, default value
@@ -42,7 +51,7 @@ LAMBDA_AUTH_TOKEN = env('LAMBDA_AUTH_TOKEN')
 # See https://docs.djangoproject.com/en/3.2/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-@)x+#twgq_$q6-f$-_k2(3dsu6_&h-ydhft3a)idt*9pbyw_$l'
+SECRET_KEY = env('SECRET_KEY', default='dev-secret')
 
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = env('DEBUG')
@@ -162,14 +171,8 @@ STATIC_URL = env('STATIC_URL')
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 # Email settings
-# EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
-# EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend' # For development testing
+# EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'  # uncomment for local dev
 EMAIL_BACKEND = 'django_ses.SESBackend'
-EMAIL_HOST = 'smtp.gmail.com'  # Or your email provider
-EMAIL_PORT = 587
-EMAIL_USE_TLS = True
-EMAIL_HOST_USER = 'support@crops.is'
-EMAIL_HOST_PASSWORD = 'your-app-specific-password'
 DEFAULT_FROM_EMAIL = 'Crops <support@crops.is>'
 
 
@@ -210,8 +213,9 @@ FILE_UPLOAD_MAX_MEMORY_SIZE = 52428800  # 50MB in bytes
 USERNAME_FIELD = 'email'
 
 # AWS settings
-AWS_ACCESS_KEY_ID = env('S3_ACCESS_KEY_ID')
-AWS_SECRET_ACCESS_KEY = env('S3_SECRET_ACCESS_KEY')
+# Prefer standard AWS_* env vars; fall back to legacy S3_* names for backwards compatibility
+AWS_ACCESS_KEY_ID = env('AWS_ACCESS_KEY_ID', default=None)
+AWS_SECRET_ACCESS_KEY = env('AWS_SECRET_ACCESS_KEY', default=None)
 AWS_STORAGE_BUCKET_NAME = env('AWS_STORAGE_BUCKET_NAME')
 AWS_STORAGE_CDN_BUCKET_NAME = env('AWS_STORAGE_CDN_BUCKET_NAME')
 AWS_S3_REGION_NAME = env('AWS_S3_LOCATION')
@@ -303,11 +307,14 @@ LOGGING = {
 
 # Paddle settings
 PADDLE_BILLING = {
-    "PADDLE_API_TOKEN": "201a8cbacc939c12b0ab1d8081328c9bb88225b7083a7773f8",
-    "PADDLE_CLIENT_TOKEN": "test_34ca2eb36d839ee175886c786bf",
-    "PADDLE_SECRET_KEY": "pdl_ntfset_01jex126nkg38bw06cnsqadjpj_6ujiQHJQ/Y63I2jwC0wD/nG0q7WuFPdU",
-    "PADDLE_API_URL": "https://sandbox-api.paddle.com",
-    "PADDLE_IPS": ["34.232.58.13", "34.195.105.136", "34.237.3.244", "35.155.119.135", "52.11.166.252", "34.212.5.7"],
+    "PADDLE_API_TOKEN": env("PADDLE_API_TOKEN", default=""),
+    "PADDLE_CLIENT_TOKEN": env("PADDLE_CLIENT_TOKEN", default=""),
+    "PADDLE_SECRET_KEY": env("PADDLE_SECRET_KEY", default=""),
+    "PADDLE_API_URL": env("PADDLE_API_URL", default="https://sandbox-api.paddle.com"),
+    "PADDLE_IPS": [
+        "34.232.58.13", "34.195.105.136", "34.237.3.244",
+        "35.155.119.135", "52.11.166.252", "34.212.5.7"
+    ],
     "PADDLE_SANDBOX_IPS": [
         "34.194.127.46",
         "54.234.237.108",
@@ -316,9 +323,9 @@ PADDLE_BILLING = {
         "44.241.183.62",
         "100.20.172.113",
     ],
-    "PADDLE_SANDBOX": True,
+    "PADDLE_SANDBOX": env.bool("PADDLE_SANDBOX", default=True),
     "PADDLE_ACCOUNT_MODEL": "users.CustomUser",
-    "ADMIN_READONLY": True,
+    "ADMIN_READONLY": env.bool("PADDLE_ADMIN_READONLY", default=True),
 }
 
 # Notification System Configuration
