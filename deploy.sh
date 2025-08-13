@@ -76,6 +76,67 @@ sed -i '' "s|:crops-backend\.web\.latest|${LATEST_WEB}|g" containers.json
 echo -e "${YELLOW}🔧 Updated containers.json image to: ${LATEST_WEB}${NC}"
 # No celery references to update
 
+# Sync .env.production into containers.json environment (if present)
+if [ -f ".env.production" ]; then
+    echo -e "${YELLOW}🔄 Syncing .env.production into containers.json environment...${NC}"
+
+    # Ensure required tools are available
+    if ! command -v jq >/dev/null 2>&1; then
+        echo -e "${RED}❌ 'jq' is required but not installed. Please install jq and re-run.${NC}"
+        echo -e "${YELLOW}   macOS: brew install jq${NC}"
+        exit 1
+    fi
+    if ! command -v python3 >/dev/null 2>&1; then
+        echo -e "${RED}❌ 'python3' is required but not installed. Please install Python 3 and re-run.${NC}"
+        exit 1
+    fi
+
+    # Convert .env.production to a JSON object
+    ENV_JSON=$(python3 - <<'PY'
+import json
+import os
+
+env_file = ".env.production"
+data = {}
+try:
+    with open(env_file) as f:
+        for raw in f:
+            line = raw.strip()
+            if not line or line.startswith('#'):
+                continue
+            if '=' not in line:
+                continue
+            key, val = line.split('=', 1)
+            key = key.strip()
+            val = val.strip()
+            if (val.startswith('"') and val.endswith('"')) or (val.startswith("'") and val.endswith("'")):
+                val = val[1:-1]
+            data[key] = val
+except FileNotFoundError:
+    pass
+
+# Ensure settings module is set for production unless explicitly provided
+data.setdefault('DJANGO_SETTINGS_MODULE', 'crops.settings_production')
+
+print(json.dumps(data))
+PY
+)
+
+    # Validate JSON and merge with existing environment (env values override existing)
+    echo "$ENV_JSON" | jq -c . > /dev/null || {
+        echo -e "${RED}❌ Failed to parse .env.production into JSON. Please check the file format.${NC}"
+        exit 1
+    }
+
+    TMP_JSON=$(mktemp)
+    jq --argjson env "$ENV_JSON" \
+       '.containers.web.environment = ((.containers.web.environment // {}) + $env)' \
+       containers.json > "$TMP_JSON" && mv "$TMP_JSON" containers.json
+    echo -e "${GREEN}✅ Injected environment variables from .env.production into containers.json${NC}"
+else
+    echo -e "${YELLOW}⚠️  .env.production not found; skipping env sync into containers.json${NC}"
+fi
+
 # Deploy the updated configuration
 aws lightsail create-container-service-deployment \
     --service-name ${SERVICE_NAME} \
