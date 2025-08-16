@@ -32,6 +32,6 @@ urlpatterns = [
     path('admin/', admin.site.urls),
     path("api/v1/", api.urls),
     path("webhooks/", webhook_api.urls),
-    path("", health_check, name="health_check"),  # Root health check endpoint
+    path("health", health_check, name="health_check"),
 ]
 urlpatterns += paddle_billing_urls

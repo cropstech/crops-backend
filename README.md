@@ -48,6 +48,9 @@ AWS_STORAGE_CDN_BUCKET_NAME=dummy
 AWS_S3_LOCATION=us-east-2
 AWS_S3_CUSTOM_DOMAIN=localhost
 
+# CDN
+CDN_URL=https://d1fn7ebh3ccl0v.cloudfront.net/
+
 # Email (dummy)
 AWS_SES_ACCESS_KEY_ID=dummy
 AWS_SES_SECRET_ACCESS_KEY=dummy
@@ -405,3 +408,86 @@ The service includes comprehensive error handling:
 - Webhook validation failures
 
 All errors are logged and returned with appropriate HTTP status codes.
+
+
+# AWS Serverless Image Handler - Quick Guide
+
+## URL Format
+```
+https://your-domain.net/path/to/image.jpg?parameter=value
+```
+
+## Parameters
+
+**Resizing:**
+- `width=300` - Set width in pixels
+- `height=200` - Set height in pixels
+- `fit=cover` - Resize behavior (cover, contain, fill, inside, outside)
+
+**Format:**
+- `format=webp` - Convert format (jpeg, png, webp, avif)
+
+**Effects:**
+- `grayscale=true` - Convert to grayscale
+- `rotate=90` - Rotate in degrees
+- `flip=true` / `flop=true` - Flip vertically/horizontally
+
+## Examples
+
+```
+# Resize to 300px width
+/image.jpg?width=300
+
+# Resize and convert to WebP
+/image.jpg?width=400&height=300&format=webp
+
+# Grayscale thumbnail
+/image.jpg?width=200&grayscale=true
+
+# Multiple effects
+/image.jpg?width=500&fit=cover&format=webp&rotate=90
+```
+
+### Complex Transformations
+```
+# Resize, convert format, and apply grayscale
+https://your-domain.net/image.jpg?width=500&height=300&fit=cover&format=webp&grayscale=true
+
+# Portrait orientation with rotation
+https://your-domain.net/landscape.jpg?width=300&height=400&fit=cover&rotate=90
+```
+
+## Parameter Limits
+
+- **Width/Height**: 1-4096 pixels
+- **Rotation**: 0-360 degrees
+- **Fit**: cover, contain, fill, inside, outside
+- **Format**: jpeg, png, webp, avif
+
+## Caching
+
+- Transformed images are cached by CloudFront
+- Each unique parameter combination creates a separate cached version
+- Cache TTL follows your CloudFront distribution settings
+
+## Performance Tips
+
+1. **Use consistent parameters** across your application to maximize cache hits
+2. **Avoid unnecessary transformations** - only apply what you need
+3. **Consider WebP format** for better compression and faster loading
+4. **Use appropriate fit modes** based on your layout requirements
+
+## Error Handling
+
+- Invalid parameters are ignored
+- Original image is served if transformation fails
+- 404 error if source image doesn't exist in S3 bucket
+
+## Advanced Usage
+
+For complex transformations not supported by URL parameters, you can still use the base64 JSON format:
+```
+https://your-domain.net/eyJyZXNpemUiOnsid2lkdGgiOjMwMH19/image.jpg
+```
+
+Where the base64 string decodes to: `{"resize":{"width":300}}`

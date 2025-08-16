@@ -37,6 +37,7 @@ env = environ.Env(
     ALLOWED_HOSTS=(list, ['127.0.0.1', 'localhost']),
     FRONTEND_URL=(str, 'https://localhost:9000'),
     STATIC_URL=(str),
+    CDN_URL=(str),
     AWS_S3_CUSTOM_DOMAIN=(str),
     AWS_STORAGE_BUCKET_NAME=(str),
     AWS_S3_LOCATION=(str, 'us-east-2'),
@@ -220,6 +221,7 @@ AWS_STORAGE_BUCKET_NAME = env('AWS_STORAGE_BUCKET_NAME')
 AWS_STORAGE_CDN_BUCKET_NAME = env('AWS_STORAGE_CDN_BUCKET_NAME')
 AWS_S3_REGION_NAME = env('AWS_S3_LOCATION')
 AWS_S3_CUSTOM_DOMAIN = env('AWS_S3_CUSTOM_DOMAIN')
+CDN_URL = env('CDN_URL')
 
 # Storage configuration using Django 4.2+ format
 STORAGES = {
@@ -250,8 +252,8 @@ STORAGES = {
 }
 
 # URLs for static and media files
-STATIC_URL = f'https://{AWS_S3_CUSTOM_DOMAIN}/static/'
-MEDIA_URL = f'https://{AWS_S3_CUSTOM_DOMAIN}/processed/'
+STATIC_URL = f'{CDN_URL}/static/'
+MEDIA_URL = f'{CDN_URL}/processed/'
 
 # Still needed for collectstatic
 STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
