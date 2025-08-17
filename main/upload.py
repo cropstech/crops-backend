@@ -53,7 +53,7 @@ class UploadManager:
                 Params={
                     'Bucket': bucket,
                     'Key': key,
-                    'ContentType': content_type
+                    # 'ContentType': content_type # Disabled to allow for any content type, removing errors for certain files with mismatched content types
                 },
                 ExpiresIn=expires_in
             )
