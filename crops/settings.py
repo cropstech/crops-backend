@@ -20,15 +20,14 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 import environ
 env = environ.Env()
 # Load environment from a specified file if provided, otherwise prefer .env.production then .env
+
+# Prefer .env by default; use .env.production only if ENV_FILE is set or explicitly requested
 _env_file = os.environ.get("ENV_FILE")
 if _env_file and os.path.exists(_env_file):
     environ.Env.read_env(_env_file)
 else:
-    env_prod = os.path.join(BASE_DIR, ".env.production")
     env_dev = os.path.join(BASE_DIR, ".env")
-    if os.path.exists(env_prod):
-        environ.Env.read_env(env_prod)
-    elif os.path.exists(env_dev):
+    if os.path.exists(env_dev):
         environ.Env.read_env(env_dev)
 
 env = environ.Env(
@@ -160,12 +159,6 @@ USE_L10N = True
 
 USE_TZ = True
 
-
-# Static files (CSS, JavaScript, Images)
-# https://docs.djangoproject.com/en/3.2/howto/static-files/
-
-STATIC_URL = env('STATIC_URL')
-
 # Default primary key field type
 # https://docs.djangoproject.com/en/3.2/ref/settings/#default-auto-field
 
@@ -244,7 +237,8 @@ STORAGES = {
             "access_key": AWS_ACCESS_KEY_ID,
             "secret_key": AWS_SECRET_ACCESS_KEY,
             "region_name": AWS_S3_REGION_NAME,
-            "custom_domain": AWS_S3_CUSTOM_DOMAIN,
+            # Use CDN domain for static files
+            "custom_domain": CDN_URL.replace("https://", "").rstrip("/"),
             "file_overwrite": True,
             "location": "static",
         },
