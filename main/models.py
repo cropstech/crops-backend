@@ -241,6 +241,9 @@ class ShareLink(models.Model):
     current_uses = models.PositiveIntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)
     
+    def is_expired(self):
+        return self.expires_at and timezone.now() > self.expires_at
+
     def __str__(self):
         return f"Share link for {self.content_object}"
 
@@ -433,10 +436,14 @@ class Asset(models.Model):
     width = models.IntegerField(null=True, blank=True)
     height = models.IntegerField(null=True, blank=True)
     duration = models.FloatField(null=True, blank=True)  # in seconds for video/audio
-    
+
+    # Document preview fields
+    pdf_preview = models.CharField(max_length=1024, null=True, blank=True, help_text="S3 key for processed PDF preview")
+    pages = models.JSONField(null=True, blank=True, help_text="List of page/slide dicts: [{'page': 1, 'bucket': ..., 'key': ...}, ...]")
+
     size = models.BigIntegerField()  # File size in bytes
     metadata = models.JSONField(default=dict, blank=True)  # Flexible metadata storage
-    
+
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True)
     date_created = models.DateTimeField(null=True, blank=True) # When the file was originally created, not when it was uploaded
     date_modified = models.DateTimeField(auto_now=True)
@@ -1157,6 +1164,8 @@ class Comment(models.Model):
     y = models.FloatField(null=True, blank=True)
     width = models.FloatField(null=True, blank=True)
     height = models.FloatField(null=True, blank=True)
+    # Optional page number for paged assets (PDF, PPT, etc.)
+    page = models.IntegerField(null=True, blank=True, help_text="Optional page number for paged assets (PDF, PPT, etc.)")
     
     class Meta:
         ordering = ['-created_at']

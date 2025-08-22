@@ -258,6 +258,7 @@ class AssetSchema(Schema):
     date_modified: datetime
     date_uploaded: datetime
     name: Optional[str] = None
+    description: Optional[str] = None
     file_type: Optional[str] = None
     file_extension: Optional[str] = None
     mime_type: Optional[str] = None
@@ -266,6 +267,8 @@ class AssetSchema(Schema):
     height: Optional[int] = None
     duration: Optional[float] = None
     processing_error: Optional[str] = None
+    pdf_preview: Optional[str] = None
+    pages: Optional[list] = None
     workspace_id: UUID
     created_by: Optional[UserSchema] = None
     favorite: bool
@@ -701,6 +704,7 @@ class CommentSchema(Schema):
     width: Optional[float] = None
     height: Optional[float] = None
     severity: Optional[str] = None  # 'high', 'medium', 'low', 'info' for AI analysis comments
+    page: Optional[int] = None  # Optional page number for paged assets
     
     @staticmethod
     def from_orm(obj):
@@ -738,7 +742,8 @@ class CommentSchema(Schema):
             'y': obj.y,
             'width': obj.width,
             'height': obj.height,
-            'severity': obj.severity
+            'severity': obj.severity,
+            'page': obj.page if hasattr(obj, 'page') else None
         }
 
 
@@ -753,19 +758,20 @@ class CommentCreate(Schema):
     y: Optional[float] = None
     width: Optional[float] = None
     height: Optional[float] = None
+    page: Optional[int] = None  # Optional page number for paged assets
 
 
 class CommentUpdate(Schema):
     text: str
 
 
+# Move EventPreferenceSchema above UserNotificationPreferenceSchema to fix NameError
 class EventPreferenceSchema(Schema):
     """Schema for individual event type preferences"""
     event_type: str
     display_name: str
     in_app_enabled: bool
     email_enabled: bool
-
 
 class UserNotificationPreferenceSchema(Schema):
     """Schema for user's complete notification preferences"""

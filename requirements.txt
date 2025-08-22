@@ -12,7 +12,7 @@ charset-normalizer==3.4.2
 cssselect2==0.8.0
 defusedxml==0.7.1
 dicebear==3.9.3
-Django==5.2
+Django==5.2.5
 django-cors-headers==4.7.0
 django-environ==0.12.0
 django-js-asset==3.1.2
@@ -42,6 +42,7 @@ typing_extensions==4.13.2
 urllib3==2.4.0
 webencodings==0.5.1
 wheel==0.45.1
+sendypy==5.2.5
 
 # Notification system dependencies
 django-notifications-hq @ git+https://github.com/openwisp/django-notifications.git@f4918c2409a734ec1aa9798d86c3a729b505f753

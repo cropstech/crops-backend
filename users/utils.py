@@ -1,3 +1,31 @@
+from sendy.api import SendyAPI
+sendy_api = SendyAPI(
+    host='https://sendy.baseline.is/',
+    api_key='tBrmr5P4jbAwHMxoUqrI',
+)
+from django.db.models import Prefetch
+
+def sendy_subscribe(email, name, subscribe_list, unsubscribe_list=None, user=None):
+    """
+    Subscribe a user to a Sendy list, and optionally unsubscribe from another list.
+    :param email: User's email
+    :param name: User's name
+    :param subscribe_list: List ID to subscribe to
+    :param unsubscribe_list: List ID to unsubscribe from (optional)
+    :param user: User object (optional, for custom logic)
+    """
+    if unsubscribe_list:
+        # Unsubscribe from the old list if currently subscribed
+        subscriber_status = sendy_api.subscriber_status(unsubscribe_list, email)
+        if subscriber_status == 'Subscribed':
+            sendy_api.unsubscribe(unsubscribe_list, email)
+
+    # Always subscribe to the new list
+    sendy_api.subscribe(
+        subscribe_list,
+        email,
+        name,
+    )
 from django.core.mail import send_mail
 from django.conf import settings
 from django.utils import timezone

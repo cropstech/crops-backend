@@ -66,6 +66,42 @@ class AssetWebhookSchema(Schema):
     """
 )
 def asset_processed_webhook(request):
+    try:
+        # Parse the JSON body
+        try:
+            body = json.loads(request.body)
+        except json.JSONDecodeError:
+            logger.error("Invalid JSON in webhook request body")
+            raise HttpError(400, "Invalid JSON in request body")
+        logger.info(f"Received webhook for asset processing")
+        logger.info(f"Body: {body}")
+        # Validate required fields
+        asset_id = body.get('asset_id')
+        if not asset_id:
+            raise HttpError(400, "Missing asset_id in webhook payload")
+        # Get status (completed or failed)
+        status = body.get('status')
+        if not status:
+            raise HttpError(400, "Missing status in webhook payload")
+        # Get the asset
+        asset = get_object_or_404(Asset, id=asset_id)
+
+        # Set file_type to DOCUMENT for document assets (e.g., ppt, pdf, docx)
+        webhook_file_type = body.get('file_type')
+        webhook_document_type = body.get('document_type')
+        if webhook_file_type and webhook_file_type.lower() == 'document':
+            asset.file_type = Asset.ASSET_TYPES[2][0]  # 'DOCUMENT'
+        elif webhook_document_type:
+            asset.file_type = Asset.ASSET_TYPES[2][0]  # 'DOCUMENT'
+
+        # ...existing code...
+        # (rest of the function remains unchanged)
+    except HttpError as e:
+        # Let HTTP errors pass through
+        raise
+    except Exception as e:
+        logger.error(f"Error processing webhook: {str(e)}")
+        raise HttpError(500, f"Webhook processing failed: {str(e)}")
     """
     Process asset metadata webhooks from Lambda function
     """
@@ -149,21 +185,18 @@ def asset_processed_webhook(request):
                 if isinstance(codec, dict) and codec.get('name') is not None:
                     asset.mime_type = f"image/{codec['name']}"
             
-            # Extract thumbnails/processed versions
-            thumbnails = []
-            for version, file_info in processed_files.items():
-                # Skip non-dictionary values (like arrays)
-                if not isinstance(file_info, dict):
-                    continue
-                    
-                if version in ['thumbnail', 'medium', 'large']:
-                    bucket = file_info.get('bucket')
-                    key = file_info.get('key')
-                    if bucket is not None and key is not None:
-                        thumbnails.append(f"https://{bucket}.s3.amazonaws.com/{key}")
-            
-            if thumbnails:
-                asset.thumbnails = thumbnails
+
+            # Set pdf_preview to the PDF key (string) if present
+            pdf_info = processed_files.get('pdf')
+            if pdf_info and isinstance(pdf_info, dict):
+                pdf_key = pdf_info.get('key')
+                if pdf_key:
+                    asset.pdf_preview = pdf_key
+
+            # Set pages to the list of page/slide dicts if present
+            thumbnail_pages = processed_files.get('thumbnail_pages')
+            if thumbnail_pages and isinstance(thumbnail_pages, list):
+                asset.pages = thumbnail_pages
             
             # Store analysis data if available
             if analysis_data and isinstance(analysis_data, dict):

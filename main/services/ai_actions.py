@@ -312,7 +312,7 @@ def _build_checks_enabled_config(action: str, config: Dict) -> Dict:
 def _get_asset_s3_info(asset: Asset) -> tuple[str, str]:
     """
     Extract S3 bucket and key from asset.
-    Assets follow the pattern: /media/workspace/[workspace_id]/assets/[asset_id]/medium.jpg
+    Assets follow the pattern: /media/workspace/[workspace_id]/assets/[asset_id]/thumbnail.jpg
     """
     if not asset.file:
         raise ValueError(f"Asset {asset.id} has no file")
@@ -323,8 +323,8 @@ def _get_asset_s3_info(asset: Asset) -> tuple[str, str]:
     bucket = getattr(settings, 'AWS_STORAGE_CDN_BUCKET_NAME', 'crops-test')
     
     # Construct S3 key based on the pattern
-    # /media/workspace/[workspace_id]/assets/[asset_id]/medium.jpg
-    s3_key = f"media/workspaces/{asset.workspace.id}/assets/{asset.id}/medium.jpg"
+    # /media/workspace/[workspace_id]/assets/[asset_id]/thumbnail.jpg
+    s3_key = f"media/workspaces/{asset.workspace.id}/assets/{asset.id}/thumbnail.jpg"
     
     return bucket, s3_key
 

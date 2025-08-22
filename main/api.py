@@ -1956,7 +1956,7 @@ def get_ai_action_results(
     
     # Validate content type
     if content_type not in ['asset', 'board']:
-        raise HTTPException(400, "Invalid content type")
+        raise HttpError(400, "Invalid content type")
     
     # Get the content type and object
     model = Asset if content_type == 'asset' else Board
@@ -2122,7 +2122,8 @@ def create_comment(request, workspace_id: UUID, data: CommentCreate):
         x=data.x,
         y=data.y,
         width=data.width,
-        height=data.height
+        height=data.height,
+        page=data.page if hasattr(data, 'page') else None
     )
     
     # Extract and process mentions

@@ -31,30 +31,7 @@ Create a `.env` file in the root directory with:
 - Docker Desktop installed and running
 
 ### 1) Create a local `.env`
-Add minimal variables required by Django settings:
-
-```bash
-# Core
-DEBUG=True
-SECRET_KEY=dev-secret
-FRONTEND_URL=http://localhost:9000
-STATIC_URL=/static/
-
-# S3/storage (dummy values for local)
-AWS_ACCESS_KEY_ID=dummy
-AWS_SECRET_ACCESS_KEY=dummy
-AWS_STORAGE_BUCKET_NAME=dummy
-AWS_STORAGE_CDN_BUCKET_NAME=dummy
-AWS_S3_LOCATION=us-east-2
-AWS_S3_CUSTOM_DOMAIN=localhost
-
-# CDN
-CDN_URL=https://d1fn7ebh3ccl0v.cloudfront.net/
-
-# Email (dummy)
-AWS_SES_ACCESS_KEY_ID=dummy
-AWS_SES_SECRET_ACCESS_KEY=dummy
-```
+Add minimal variables required by Django settings
 
 ### 2) Build and start the stack
 ```bash
@@ -90,6 +67,14 @@ Open http://localhost:8000
 - Reset data volumes (Postgres/Redis):
   ```bash
   docker compose down -v
+  ```
+- Make migrations:
+  ```bash
+  docker compose exec web python manage.py makemigrations
+  ````
+- Migrate:
+  ```bash
+  docker compose exec web python manage.py migrate
   ```
 
 Notes:

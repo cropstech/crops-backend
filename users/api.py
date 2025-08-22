@@ -386,6 +386,7 @@ def register(request, payload: SignUpSchema):
         logger.info(f"User created: {user.email}")
         logger.info(f"Invite token: {payload.invite_token}")
         logger.info(f"Verified: {verified}")
+
         
         # Handle invitation after user creation
         if payload.invite_token:
@@ -458,7 +459,16 @@ def verify_email(request, token: str):
         user.verification_token = None
         user.verification_token_created = None
         user.save()
-        
+
+        # Subscribe user to Sendy list after verification
+        from .utils import sendy_subscribe
+        sendy_subscribe(
+            email=user.email,
+            name=f"{user.first_name} {user.last_name}",
+            subscribe_list='mwNckEgNy2fGISK7RFjGzA',
+            user=user
+        )
+
         return ApiResponse.success(
             message="Email verified successfully"
         )

@@ -155,6 +155,31 @@ class AssetCheckerService:
             'webhook_url': webhook_url
         }
         
+        # --- Multi-page support: add pages if present ---
+        # Try to get the Asset object from s3_key (same logic as _get_asset_from_analysis)
+        asset = None
+        try:
+            from main.models import Asset
+            s3_key = request.s3_key
+            if '/assets/' in s3_key:
+                parts = s3_key.split('/assets/')
+                if len(parts) > 1:
+                    asset_part = parts[1].split('/')[0]
+                    try:
+                        asset = Asset.objects.get(id=asset_part)
+                    except Asset.DoesNotExist:
+                        pass
+            if not asset:
+                # fallback: search by s3_key pattern in file field
+                assets = Asset.objects.filter(file__icontains=s3_key.split('/')[-1])
+                if assets.exists():
+                    asset = assets.first()
+        except Exception as e:
+            logger.warning(f"Could not resolve asset for s3_key {request.s3_key}: {e}")
+        if asset and getattr(asset, 'pages', None):
+            payload['pages'] = asset.pages
+        # --- End multi-page support ---
+        
         try:
             # Log the payload for debugging
             logger.info(f"Sending payload to Lambda API: {json.dumps(payload, indent=2)}")
