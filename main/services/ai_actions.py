@@ -45,15 +45,15 @@ def trigger_ai_actions(field_value: CustomFieldValue, board_context: Optional['B
         logger.warning(f"AssetChecker only supports Asset objects, got {type(content_object)}")
         return []
 
-    # Create AIActionResult entries for all actions
-    results = []
-    for action_config in enabled_actions:
-        result = AIActionResult.objects.create(
-            field_value=field_value,
-            action=action_config.action,
-            status='PENDING'
-        )
-        results.append(result)
+    # Create a single AIActionResult to represent the combined analysis
+    first_action = enabled_actions.first()
+    combined_action = first_action.action if first_action else 'image_quality'
+    combined_result = AIActionResult.objects.create(
+        field_value=field_value,
+        action=combined_action,
+        status='PENDING'
+    )
+    results = [combined_result]
 
     # Process all actions in a single Lambda request
     try:
@@ -101,7 +101,7 @@ def process_combined_ai_actions(results: List[AIActionResult], board_context: Op
     # Get S3 info from asset
     s3_bucket, s3_key = _get_asset_s3_info(content_object)
     
-    # Build combined checks_enabled configuration
+    # Build combined checks_enabled configuration based on all enabled actions
     checks_enabled = _build_combined_checks_enabled_config(results)
     
     # Start analysis with AssetCheckerService
@@ -113,8 +113,8 @@ def process_combined_ai_actions(results: List[AIActionResult], board_context: Op
         s3_key=s3_key
     )
     
-    # Store all AIActionResult IDs for later reference
-    ai_action_result_ids = [result.id for result in results]
+    # Store single AIActionResult ID for later reference
+    ai_action_result_ids = [results[0].id]
     
     response = service.start_analysis(
         analysis_request, 
@@ -123,17 +123,21 @@ def process_combined_ai_actions(results: List[AIActionResult], board_context: Op
         board=board_context  # Pass board context for board-scoped analysis
     )
     
-    # Store the check_id in all results for tracking
-    for result in results:
-        result.result = {
-            'check_id': response.check_id,
-            'status': response.status,
-            'webhook_url': response.webhook_url,
-            'checks_enabled': checks_enabled
-        }
-        result.save()
+    # Store the check_id in the single consolidated result for tracking
+    results[0].result = {
+        'check_id': response.check_id,
+        'status': response.status,
+        'webhook_url': response.webhook_url,
+        'checks_enabled': checks_enabled
+    }
+    results[0].save()
     
-    logger.info(f"Started combined asset analysis {response.check_id} for {len(results)} AI actions")
+    # Log count using the option's enabled action configs
+    try:
+        enabled_count = results[0].field_value.option_value.ai_action_configs.filter(is_enabled=True).count()
+    except Exception:
+        enabled_count = 0
+    logger.info(f"Started combined asset analysis {response.check_id} for {enabled_count} enabled action(s)")
 
 def process_ai_action(result: AIActionResult) -> None:
     """
@@ -219,10 +223,15 @@ def _build_combined_checks_enabled_config(results: List[AIActionResult]) -> Dict
         }
     }
     
-    # Process each AI action result
-    for result in results:
-        action = result.action
-        action_config = result.field_value.option_value.ai_action_configs.get(action=action)
+    # Derive field_value and gather all enabled action configs from it
+    if not results:
+        return checks_enabled
+    field_value = results[0].field_value
+    enabled_configs = field_value.option_value.ai_action_configs.filter(is_enabled=True)
+
+    # Process each enabled action
+    for action_config in enabled_configs:
+        action = action_config.action
         config = action_config.configuration or {}
         
         # Enable checks based on action type
