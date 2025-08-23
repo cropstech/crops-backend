@@ -1249,6 +1249,7 @@ def get_board_ancestors(request, workspace_id: UUID, board_id: UUID):
 @decorate_view(check_workspace_permission(WorkspaceMember.Role.EDITOR))
 def update_board(request, workspace_id: UUID, board_id: UUID, data: BoardUpdateSchema):
     """Update a board"""
+    logger.info(f"Updating board {board_id} with data: {data}")
     board = get_object_or_404(
         Board.objects.filter(workspace_id=workspace_id),
         id=board_id
