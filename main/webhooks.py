@@ -298,12 +298,29 @@ def asset_checker_webhook(request, check_id: str):
         success = service.process_webhook_payload(webhook_payload)
         
         if success:
-            return {
-                "success": True, 
+            # Add a success message when no issues are found
+            success_message = None
+            try:
+                total_issues = None
+                if isinstance(results, dict):
+                    metrics = results.get('metrics') or {}
+                    total_issues = metrics.get('total_issues')
+                    if total_issues is None:
+                        total_issues = len(results.get('issues', []) or [])
+                if payload_status == 'completed' and (total_issues == 0):
+                    success_message = "✅ Asset analysis complete — no issues found"
+            except Exception:
+                success_message = None
+
+            response = {
+                "success": True,
                 "message": f"Asset checker webhook processed for {check_id}",
                 "status": payload_status,
                 "results_extracted": results is not None
             }
+            if success_message:
+                response["success_message"] = success_message
+            return response
         else:
             logger.error(f"Failed to process webhook for {check_id}")
             raise HttpError(500, "Failed to process webhook")

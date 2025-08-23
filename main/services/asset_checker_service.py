@@ -299,13 +299,25 @@ class AssetCheckerService:
             
             # Get all issues from the standardized format
             all_issues = results.get('issues', [])
-            
-            if not all_issues:
-                logger.info(f"No issues found in results for {analysis.check_id}")
-                return
-            
             content_type = ContentType.objects.get_for_model(Asset)
             comments_created = []
+
+            # If no issues were found, create a simple success comment
+            if not all_issues:
+                success_text = "✅ Asset analysis complete — no issues found"
+
+                comment = Comment.objects.create(
+                    content_type=content_type,
+                    object_id=asset.id,
+                    board=analysis.board,
+                    author=None,
+                    text=success_text,
+                    comment_type='AI_ANALYSIS',
+                    severity='info',
+                    annotation_type='NONE',
+                )
+                comments_created.append(comment)
+                logger.info(f"Created success comment for analysis {analysis.check_id} (no issues found)")
             
             # Create one comment per issue
             for issue in all_issues:
@@ -363,7 +375,7 @@ class AssetCheckerService:
                 location_info = f" with {annotation_type.lower()} annotation" if annotation_type != 'NONE' else ""
                 logger.info(f"Created {severity} severity comment for {check_type}: {message[:50]}...{location_info}")
             
-            logger.info(f"Created {len(comments_created)} individual issue comments for analysis {analysis.check_id}")
+            logger.info(f"Created {len(comments_created)} AI analysis comment(s) for analysis {analysis.check_id}")
             
             # Trigger notifications for AI analysis completion
             if comments_created:
