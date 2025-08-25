@@ -361,6 +361,25 @@ class AssetCheckerService:
                                 y = (float(top) / asset.height) * 100
                                 logger.info(f"Setting placeholder point annotation for {issue_type}: ({x:.1f}%, {y:.1f}%) - converted from pixels ({left}, {top}) on {asset.width}x{asset.height} image")
                 
+                # Handle text close to edge special case
+                elif issue_type == 'text_close_to_edge' and issue.get('details', {}).get('affected_lines'):
+                    affected_lines = issue.get('details', {}).get('affected_lines', [])
+                    if affected_lines and len(affected_lines) > 0 and asset.width and asset.height:
+                        # Use the first affected line's position for annotation
+                        first_line = affected_lines[0]
+                        position = first_line.get('position', {})
+                        
+                        if position:
+                            left = position.get('left')
+                            top = position.get('top')
+                            
+                            # Create a point annotation for the first affected line
+                            if all(v is not None for v in [left, top]):
+                                annotation_type = 'POINT'
+                                x = (float(left) / asset.width) * 100
+                                y = (float(top) / asset.height) * 100
+                                logger.info(f"Setting text close to edge annotation for {issue_type}: ({x:.1f}%, {y:.1f}%) - converted from pixels ({left}, {top}) on {asset.width}x{asset.height} image, representing {len(affected_lines)} affected line(s)")
+                
                 # Handle standard location field for other issue types
                 elif location and isinstance(location, dict):
                     # Map location fields to comment annotation fields
