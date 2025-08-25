@@ -365,10 +365,9 @@ def get_subscription(request, workspace_id: UUID):
 def create_share_link(
     request, 
     workspace_id: UUID, 
-    data: ShareLinkSchema, 
-    workspace: Any, 
-    member: Any
+    data: ShareLinkSchema
 ):
+    workspace = get_object_or_404(Workspace, id=workspace_id)
     content_type = ContentType.objects.get(model=data.content_type.lower())
     
     share_link = ShareLink.objects.create(
