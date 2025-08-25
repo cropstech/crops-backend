@@ -331,7 +331,38 @@ class AssetCheckerService:
                 annotation_type = 'NONE'
                 x = y = width = height = None
                 
-                if location and isinstance(location, dict):
+                # Handle placeholder detection special case
+                if issue_type == 'placeholder_text_detected' and issue.get('details', {}).get('placeholder_blocks'):
+                    placeholder_blocks = issue.get('details', {}).get('placeholder_blocks', [])
+                    if placeholder_blocks and len(placeholder_blocks) > 0:
+                        # Use the first placeholder block's position for annotation
+                        first_block = placeholder_blocks[0]
+                        position = first_block.get('position', {})
+                        
+                        if position and asset.width and asset.height:
+                            left = position.get('left')
+                            top = position.get('top')
+                            loc_width = position.get('width')
+                            loc_height = position.get('height')
+                            
+                            # Only set annotation if we have valid coordinates and image dimensions
+                            if all(v is not None for v in [left, top, loc_width, loc_height]):
+                                annotation_type = 'AREA'
+                                # Convert from pixel coordinates to percentages based on image dimensions
+                                x = (float(left) / asset.width) * 100
+                                y = (float(top) / asset.height) * 100
+                                width = (float(loc_width) / asset.width) * 100
+                                height = (float(loc_height) / asset.height) * 100
+                                logger.info(f"Setting placeholder annotation for {issue_type}: ({x:.1f}%, {y:.1f}%, {width:.1f}%, {height:.1f}%) - converted from pixels ({left}, {top}, {loc_width}, {loc_height}) on {asset.width}x{asset.height} image")
+                            elif all(v is not None for v in [left, top]):
+                                # If we only have position, create a point annotation
+                                annotation_type = 'POINT'
+                                x = (float(left) / asset.width) * 100
+                                y = (float(top) / asset.height) * 100
+                                logger.info(f"Setting placeholder point annotation for {issue_type}: ({x:.1f}%, {y:.1f}%) - converted from pixels ({left}, {top}) on {asset.width}x{asset.height} image")
+                
+                # Handle standard location field for other issue types
+                elif location and isinstance(location, dict):
                     # Map location fields to comment annotation fields
                     left = location.get('left')
                     top = location.get('top')
