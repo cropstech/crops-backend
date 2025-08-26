@@ -79,6 +79,7 @@ class WorkspaceInviteSchema(Schema):
 class ShareLinkSchema(Schema):
     content_type: str  # e.g., 'asset', 'collection'
     object_id: str  # Support both integers and UUIDs as strings
+    board_id: Optional[str] = None  # Optional - for board-specific context or null for global context
     expires_at: Optional[datetime] = None
     password: Optional[str] = None
     # Granular sharing controls
@@ -91,6 +92,7 @@ class ShareLinkResponseSchema(Schema):
     id: int
     token: str
     url: str
+    board_id: Optional[str] = None
     expires_at: Optional[datetime] = None
     password: Optional[str] = None
     # Granular sharing controls
@@ -101,6 +103,7 @@ class ShareLinkResponseSchema(Schema):
     created_at: datetime
 
 class ShareLinkUpdateSchema(Schema):
+    board_id: Optional[str] = None
     expires_at: Optional[datetime] = None
     password: Optional[str] = None
     # Granular sharing controls

@@ -227,6 +227,10 @@ class ShareLink(models.Model):
     object_id = models.CharField(max_length=50)  # Support both integers and UUIDs
     content_object = GenericForeignKey('content_type', 'object_id')
     
+    # Board context - optional for all content types
+    board = models.ForeignKey('Board', on_delete=models.CASCADE, null=True, blank=True,
+                             help_text="Board context for sharing. Null = global context, Board = board-specific context.")
+    
     # Optional settings
     expires_at = models.DateTimeField(null=True, blank=True)
     password = models.CharField(max_length=128, null=True, blank=True)
@@ -251,8 +255,8 @@ class ShareLink(models.Model):
             return False
         return True
 
-class Meta:
-        unique_together = ['content_type', 'object_id']
+    class Meta:
+        unique_together = ['content_type', 'object_id', 'board']
 
 class Board(MPTTModel):
     VIEW_TYPES = [

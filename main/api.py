@@ -366,18 +366,27 @@ def get_or_create_share_link(
     request, 
     workspace_id: UUID, 
     content_type: str,
-    object_id: str
+    object_id: str,
+    board_id: Optional[UUID] = None
 ):
     """Get existing share link or create a new one with default settings"""
     workspace = get_object_or_404(Workspace, id=workspace_id)
     content_type_obj = ContentType.objects.get(model=content_type.lower())
+    
+    # Handle board context
+    board = None
+    if board_id:
+        board = get_object_or_404(Board, workspace=workspace, id=board_id)
+    
+    # Board context is optional - can share assets globally or in board context
     
     # Try to get existing share link
     try:
         share_link = ShareLink.objects.get(
             workspace=workspace,
             content_type=content_type_obj,
-            object_id=object_id
+            object_id=object_id,
+            board=board
         )
     except ShareLink.DoesNotExist:
         # Create new share link with default settings
@@ -386,14 +395,16 @@ def get_or_create_share_link(
             created_by=request.user,
             content_type=content_type_obj,
             object_id=object_id,
+            board=board,
             # expires_at, password remain None (default values)
-            # Granular controls use model defaults (True, True, True, False)
+            # Granular controls use model defaults (False, False, False, False)
         )
     
     return {
         "id": share_link.id,
         "token": str(share_link.token),
         "url": f"/share/{share_link.token}",
+        "board_id": str(share_link.board.id) if share_link.board else None,
         "expires_at": share_link.expires_at,
         "password": share_link.password,
         "allow_commenting": share_link.allow_commenting,
@@ -417,11 +428,19 @@ def create_share_link(
     workspace = get_object_or_404(Workspace, id=workspace_id)
     content_type = ContentType.objects.get(model=data.content_type.lower())
     
+    # Handle board context
+    board = None
+    if data.board_id:
+        board = get_object_or_404(Board, workspace=workspace, id=data.board_id)
+    
+    # Board context is optional for all content types
+    
     # Try to get existing share link or create new one
     share_link, created = ShareLink.objects.get_or_create(
         workspace=workspace,
         content_type=content_type,
         object_id=data.object_id,
+        board=board,
         defaults={
             'created_by': request.user,
             'expires_at': data.expires_at,
@@ -447,6 +466,7 @@ def create_share_link(
         "id": share_link.id,
         "token": str(share_link.token),
         "url": f"/share/{share_link.token}",
+        "board_id": str(share_link.board.id) if share_link.board else None,
         "expires_at": share_link.expires_at,
         "password": share_link.password,
         "allow_commenting": share_link.allow_commenting,
@@ -463,20 +483,37 @@ def update_share_link(
     workspace_id: UUID, 
     content_type: str,
     object_id: str,
-    data: ShareLinkUpdateSchema
+    data: ShareLinkUpdateSchema,
+    board_id: Optional[UUID] = None
 ):
     """Update an existing share link's settings"""
     workspace = get_object_or_404(Workspace, id=workspace_id)
     content_type_obj = ContentType.objects.get(model=content_type.lower())
     
+    # Handle board context
+    board = None
+    if board_id:
+        board = get_object_or_404(Board, workspace=workspace, id=board_id)
+    elif data.board_id:
+        board = get_object_or_404(Board, workspace=workspace, id=data.board_id)
+    
+    # Board context is optional - supports both global and board-specific sharing
+    
     share_link = get_object_or_404(
         ShareLink,
         workspace=workspace,
         content_type=content_type_obj,
-        object_id=object_id
+        object_id=object_id,
+        board=board
     )
     
     # Update only the provided fields
+    if data.board_id is not None:
+        if data.board_id:
+            new_board = get_object_or_404(Board, workspace=workspace, id=data.board_id)
+            share_link.board = new_board
+        else:
+            share_link.board = None
     if data.expires_at is not None:
         share_link.expires_at = data.expires_at
     if data.password is not None:
@@ -496,6 +533,7 @@ def update_share_link(
         "id": share_link.id,
         "token": str(share_link.token),
         "url": f"/share/{share_link.token}",
+        "board_id": str(share_link.board.id) if share_link.board else None,
         "expires_at": share_link.expires_at,
         "password": share_link.password,
         "allow_commenting": share_link.allow_commenting,
@@ -512,9 +550,42 @@ def access_shared_content(request, token: str):
     if not share_link.is_valid:
         raise HttpError(403, "This share link has expired")
     
+    # Serialize the content object based on its type
+    content_data = None
+    if share_link.content_type.model == 'asset':
+        from .schemas import AssetSchema
+        content_data = AssetSchema.from_orm(share_link.content_object).dict()
+    elif share_link.content_type.model == 'board':
+        from .schemas import BoardOutSchema
+        content_data = BoardOutSchema.from_orm(share_link.content_object).dict()
+    elif share_link.content_type.model == 'collection':
+        # Add collection schema if needed
+        content_data = {
+            "id": share_link.content_object.id,
+            "name": share_link.content_object.name,
+            "description": share_link.content_object.description
+        }
+    
+    # Serialize board data if present
+    board_data = None
+    if share_link.board:
+        board_data = {
+            "id": str(share_link.board.id),
+            "name": share_link.board.name,
+            "view_type": share_link.board.view_type
+        }
+    
     return {
         "content_type": share_link.content_type.model,
-        "content": share_link.content_object
+        "content": content_data,
+        "board": board_data,
+        "board_id": str(share_link.board.id) if share_link.board else None,
+        "share_settings": {
+            "allow_commenting": share_link.allow_commenting,
+            "show_comments": share_link.show_comments,
+            "show_custom_fields": share_link.show_custom_fields,
+            "allow_editing_custom_fields": share_link.allow_editing_custom_fields
+        }
     }
 
 @router.post("/workspaces/{uuid:workspace_id}/invites", response=WorkspaceInviteOut)
