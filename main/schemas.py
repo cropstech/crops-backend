@@ -78,11 +78,36 @@ class WorkspaceInviteSchema(Schema):
 
 class ShareLinkSchema(Schema):
     content_type: str  # e.g., 'asset', 'collection'
-    object_id: int
-    permission: str
+    object_id: str  # Support both integers and UUIDs as strings
     expires_at: Optional[datetime] = None
     password: Optional[str] = None
-    max_uses: Optional[int] = None
+    # Granular sharing controls
+    allow_commenting: Optional[bool] = False
+    show_comments: Optional[bool] = False
+    show_custom_fields: Optional[bool] = False
+    allow_editing_custom_fields: Optional[bool] = False
+
+class ShareLinkResponseSchema(Schema):
+    id: int
+    token: str
+    url: str
+    expires_at: Optional[datetime] = None
+    password: Optional[str] = None
+    # Granular sharing controls
+    allow_commenting: bool
+    show_comments: bool
+    show_custom_fields: bool
+    allow_editing_custom_fields: bool
+    created_at: datetime
+
+class ShareLinkUpdateSchema(Schema):
+    expires_at: Optional[datetime] = None
+    password: Optional[str] = None
+    # Granular sharing controls
+    allow_commenting: Optional[bool] = None
+    show_comments: Optional[bool] = None
+    show_custom_fields: Optional[bool] = None
+    allow_editing_custom_fields: Optional[bool] = None
 
 
 class WorkspaceInviteIn(Schema):

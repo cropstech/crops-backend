@@ -43,8 +43,8 @@ from .models import (
     WorkspaceMember
 )
 from .schemas import (
-    WorkspaceInviteSchema, ShareLinkSchema, WorkspaceCreateSchema, 
-    WorkspaceDataSchema, WorkspaceUpdateSchema, 
+    WorkspaceInviteSchema, ShareLinkSchema, ShareLinkResponseSchema, ShareLinkUpdateSchema,
+    WorkspaceCreateSchema, WorkspaceDataSchema, WorkspaceUpdateSchema, 
     WorkspaceInviteIn, WorkspaceInviteOut, InviteAcceptSchema,
     AssetSchema, WorkspaceUpdateForm, WorkspaceMemberUpdateSchema,
     WorkspaceMemberSchema,
@@ -360,31 +360,149 @@ def get_subscription(request, workspace_id: UUID):
         "next_bill_date": workspace_subscription.data.get('next_billed_at')
     }
 
-@router.post("/workspaces/{uuid:workspace_id}/share")
+@router.get("/workspaces/{uuid:workspace_id}/share/{content_type}/{object_id}", response=ShareLinkResponseSchema)
+@decorate_view(check_workspace_permission(WorkspaceMember.Role.EDITOR))
+def get_or_create_share_link(
+    request, 
+    workspace_id: UUID, 
+    content_type: str,
+    object_id: str
+):
+    """Get existing share link or create a new one with default settings"""
+    workspace = get_object_or_404(Workspace, id=workspace_id)
+    content_type_obj = ContentType.objects.get(model=content_type.lower())
+    
+    # Try to get existing share link
+    try:
+        share_link = ShareLink.objects.get(
+            workspace=workspace,
+            content_type=content_type_obj,
+            object_id=object_id
+        )
+    except ShareLink.DoesNotExist:
+        # Create new share link with default settings
+        share_link = ShareLink.objects.create(
+            workspace=workspace,
+            created_by=request.user,
+            content_type=content_type_obj,
+            object_id=object_id,
+            # expires_at, password remain None (default values)
+            # Granular controls use model defaults (True, True, True, False)
+        )
+    
+    return {
+        "id": share_link.id,
+        "token": str(share_link.token),
+        "url": f"/share/{share_link.token}",
+        "expires_at": share_link.expires_at,
+        "password": share_link.password,
+        "allow_commenting": share_link.allow_commenting,
+        "show_comments": share_link.show_comments,
+        "show_custom_fields": share_link.show_custom_fields,
+        "allow_editing_custom_fields": share_link.allow_editing_custom_fields,
+        "created_at": share_link.created_at
+    }
+
+@router.post("/workspaces/{uuid:workspace_id}/share", response=ShareLinkResponseSchema)
 @decorate_view(check_workspace_permission(WorkspaceMember.Role.EDITOR))
 def create_share_link(
     request, 
     workspace_id: UUID, 
     data: ShareLinkSchema
 ):
+    """
+    Create a share link with custom settings.
+    If a share link already exists for this content, it will be updated with the new settings.
+    """
     workspace = get_object_or_404(Workspace, id=workspace_id)
     content_type = ContentType.objects.get(model=data.content_type.lower())
     
-    share_link = ShareLink.objects.create(
+    # Try to get existing share link or create new one
+    share_link, created = ShareLink.objects.get_or_create(
         workspace=workspace,
-        created_by=request.user,
         content_type=content_type,
         object_id=data.object_id,
-        permission=data.permission,
-        expires_at=data.expires_at,
-        password=data.password,
-        max_uses=data.max_uses
+        defaults={
+            'created_by': request.user,
+            'expires_at': data.expires_at,
+            'password': data.password,
+            'allow_commenting': data.allow_commenting,
+            'show_comments': data.show_comments,
+            'show_custom_fields': data.show_custom_fields,
+            'allow_editing_custom_fields': data.allow_editing_custom_fields
+        }
     )
+    
+    # If share link already existed, update it with new settings
+    if not created:
+        share_link.expires_at = data.expires_at
+        share_link.password = data.password
+        share_link.allow_commenting = data.allow_commenting
+        share_link.show_comments = data.show_comments
+        share_link.show_custom_fields = data.show_custom_fields
+        share_link.allow_editing_custom_fields = data.allow_editing_custom_fields
+        share_link.save()
     
     return {
         "id": share_link.id,
-        "token": share_link.token,
-        "url": f"/share/{share_link.token}"
+        "token": str(share_link.token),
+        "url": f"/share/{share_link.token}",
+        "expires_at": share_link.expires_at,
+        "password": share_link.password,
+        "allow_commenting": share_link.allow_commenting,
+        "show_comments": share_link.show_comments,
+        "show_custom_fields": share_link.show_custom_fields,
+        "allow_editing_custom_fields": share_link.allow_editing_custom_fields,
+        "created_at": share_link.created_at
+    }
+
+@router.put("/workspaces/{uuid:workspace_id}/share/{content_type}/{object_id}", response=ShareLinkResponseSchema)
+@decorate_view(check_workspace_permission(WorkspaceMember.Role.EDITOR))
+def update_share_link(
+    request, 
+    workspace_id: UUID, 
+    content_type: str,
+    object_id: str,
+    data: ShareLinkUpdateSchema
+):
+    """Update an existing share link's settings"""
+    workspace = get_object_or_404(Workspace, id=workspace_id)
+    content_type_obj = ContentType.objects.get(model=content_type.lower())
+    
+    share_link = get_object_or_404(
+        ShareLink,
+        workspace=workspace,
+        content_type=content_type_obj,
+        object_id=object_id
+    )
+    
+    # Update only the provided fields
+    if data.expires_at is not None:
+        share_link.expires_at = data.expires_at
+    if data.password is not None:
+        share_link.password = data.password
+    if data.allow_commenting is not None:
+        share_link.allow_commenting = data.allow_commenting
+    if data.show_comments is not None:
+        share_link.show_comments = data.show_comments
+    if data.show_custom_fields is not None:
+        share_link.show_custom_fields = data.show_custom_fields
+    if data.allow_editing_custom_fields is not None:
+        share_link.allow_editing_custom_fields = data.allow_editing_custom_fields
+        
+    share_link.save()
+    
+    return {
+        "id": share_link.id,
+        "token": str(share_link.token),
+        "url": f"/share/{share_link.token}",
+        "expires_at": share_link.expires_at,
+        "password": share_link.password,
+        "allow_commenting": share_link.allow_commenting,
+        "show_comments": share_link.show_comments,
+        "show_custom_fields": share_link.show_custom_fields,
+        "allow_editing_custom_fields": share_link.allow_editing_custom_fields,
+        "created_at": share_link.created_at
     }
 
 @router.get("/share/{token}")
@@ -393,9 +511,6 @@ def access_shared_content(request, token: str):
     
     if not share_link.is_valid:
         raise HttpError(403, "This share link has expired")
-    
-    share_link.current_uses += 1
-    share_link.save()
     
     return {
         "content_type": share_link.content_type.model,

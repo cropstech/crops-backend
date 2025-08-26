@@ -217,28 +217,26 @@ class WorkspaceInvitation(models.Model):
 
 class ShareLink(models.Model):
     """Generic share links for any workspace content"""
-    PERMISSION_CHOICES = [
-        ('VIEW', 'View only'),
-        ('COMMENT', 'Can comment'),
-        ('EDIT', 'Can edit'),
-        ('SUBMIT', 'Can submit (for forms)'),
-    ]
 
     workspace = models.ForeignKey(Workspace, on_delete=models.CASCADE)
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
     token = models.UUIDField(default=uuid.uuid4, editable=False)
-    permission = models.CharField(max_length=20, choices=PERMISSION_CHOICES, default='VIEW')
     
     # Generic foreign key to support sharing different types of content
     content_type = models.ForeignKey(ContentType, on_delete=models.CASCADE)
-    object_id = models.PositiveIntegerField()
+    object_id = models.CharField(max_length=50)  # Support both integers and UUIDs
     content_object = GenericForeignKey('content_type', 'object_id')
     
     # Optional settings
     expires_at = models.DateTimeField(null=True, blank=True)
     password = models.CharField(max_length=128, null=True, blank=True)
-    max_uses = models.PositiveIntegerField(null=True, blank=True)
-    current_uses = models.PositiveIntegerField(default=0)
+    
+    # Granular sharing controls
+    allow_commenting = models.BooleanField(default=False, help_text="Allow shared users to add comments")
+    show_comments = models.BooleanField(default=False, help_text="Show existing comments to shared users")
+    show_custom_fields = models.BooleanField(default=False, help_text="Show custom fields to shared users")
+    allow_editing_custom_fields = models.BooleanField(default=False, help_text="Allow shared users to edit custom fields")
+    
     created_at = models.DateTimeField(auto_now_add=True)
     
     def is_expired(self):
@@ -251,9 +249,10 @@ class ShareLink(models.Model):
     def is_valid(self):
         if self.expires_at and self.expires_at < timezone.now():
             return False
-        if self.max_uses and self.current_uses >= self.max_uses:
-            return False
         return True
+
+class Meta:
+        unique_together = ['content_type', 'object_id']
 
 class Board(MPTTModel):
     VIEW_TYPES = [
