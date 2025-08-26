@@ -739,21 +739,30 @@ class CommentSchema(Schema):
     
     @staticmethod
     def from_orm(obj):
-        # Handle AI-generated comments that have no author
-        if obj.author is None:
-            # Create a system author representation for AI comments
-            author_data = {
-                'id': -1,  # Special ID for system comments
-                'email': 'ai-assistant@system.local',
-                'first_name': 'AI',
-                'last_name': 'Assistant'
-            }
-        else:
+        # Handle different types of comments: authenticated, anonymous, or AI-generated
+        if obj.author is not None:
+            # Authenticated user comment
             author_data = {
                 'id': obj.author.id,
                 'email': obj.author.email,
                 'first_name': obj.author.first_name,
                 'last_name': obj.author.last_name
+            }
+        elif obj.is_anonymous:
+            # Anonymous user comment
+            author_data = {
+                'id': -2,  # Special ID for anonymous comments
+                'email': obj.author_email or 'anonymous@local',
+                'first_name': obj.author_name or 'Anonymous',
+                'last_name': ''
+            }
+        else:
+            # AI-generated or system comment
+            author_data = {
+                'id': -1,  # Special ID for system comments
+                'email': 'ai-assistant@system.local',
+                'first_name': 'AI',
+                'last_name': 'Assistant'
             }
         
         return {
@@ -1140,5 +1149,67 @@ class AssetListFilters(Schema):
     favorite: Optional[bool] = Field(None, description="Filter by favorite status")
     date_uploaded_from: Optional[datetime] = Field(None, description="Uploaded after this date")
     date_uploaded_to: Optional[datetime] = Field(None, description="Uploaded before this date")
+
+
+# Anonymous Actions Schemas
+
+class AnonymousCommentSchema(Schema):
+    """Schema for creating comments anonymously through share links"""
+    text: str = Field(..., min_length=1, max_length=2000, description="Comment content")
+    author_email: Optional[str] = Field(None, description="Optional email for anonymous users")
+    author_name: Optional[str] = Field(None, description="Optional display name for anonymous users")
+    parent_id: Optional[int] = Field(None, description="ID of parent comment for replies")
+    
+    # Annotation fields (optional)
+    annotation_type: str = Field('NONE', description="Annotation type: NONE, POINT, or AREA")
+    x: Optional[float] = Field(None, description="X coordinate for point/area annotations")
+    y: Optional[float] = Field(None, description="Y coordinate for point/area annotations")
+    width: Optional[float] = Field(None, description="Width for area annotations")
+    height: Optional[float] = Field(None, description="Height for area annotations")
+    page: Optional[int] = Field(None, description="Page number for paged assets (PDF, PPT, etc.)")
+
+
+class AnonymousFieldEditSchema(Schema):
+    """Schema for editing custom field values anonymously through share links"""
+    # Value fields - only one will be used based on field_type
+    text_value: Optional[str] = Field(None, description="Value for TEXT fields")
+    date_value: Optional[datetime] = Field(None, description="Value for DATE fields")
+    option_value_id: Optional[int] = Field(None, description="Selected option ID for SINGLE_SELECT fields")
+    multi_option_ids: Optional[List[int]] = Field(None, description="Selected option IDs for MULTI_SELECT fields")
+    
+    # Optional editor info for anonymous users
+    editor_email: Optional[str] = Field(None, description="Optional email for anonymous editors")
+    editor_name: Optional[str] = Field(None, description="Optional display name for anonymous editors")
+
+
+class AnonymousCommentResponseSchema(Schema):
+    """Response schema for anonymous comment creation"""
+    id: int
+    text: str
+    author_display: str
+    author_email: Optional[str] = None
+    author_name: Optional[str] = None
+    is_anonymous: bool
+    parent_id: Optional[int] = None
+    is_reply: bool
+    annotation_type: str = 'NONE'
+    x: Optional[float] = None
+    y: Optional[float] = None
+    width: Optional[float] = None
+    height: Optional[float] = None
+    page: Optional[int] = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class CustomFieldEditResponseSchema(Schema):
+    """Response schema for custom field edit operations"""
+    id: int
+    field_id: int
+    field_title: str
+    field_type: str
+    value_display: str
+    updated_by: str
+    updated_at: datetime
 
 

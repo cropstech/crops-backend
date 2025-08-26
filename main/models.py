@@ -1126,6 +1126,12 @@ class Comment(models.Model):
                              help_text="Board context for this comment. Null means global 'all assets' comment.")
     
     author = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='comments', null=True, blank=True)
+    
+    # Anonymous user fields (optional)
+    author_email = models.EmailField(null=True, blank=True, help_text="Email for anonymous users")
+    author_name = models.CharField(max_length=255, null=True, blank=True, help_text="Display name for anonymous users")
+    is_anonymous = models.BooleanField(default=False, help_text="True if this comment was made by an anonymous user")
+    
     text = models.TextField()
     comment_type = models.CharField(max_length=50, default='USER', help_text="Type of comment (USER, AI_ANALYSIS, SYSTEM, etc.)")
     severity = models.CharField(
@@ -1182,8 +1188,19 @@ class Comment(models.Model):
         ]
 
     def __str__(self):
-        author_display = self.author.email if self.author else "Crops System"
+        author_display = self.get_author_display()
         return f"Comment by {author_display} on {self.content_object}"
+    
+    def get_author_display(self):
+        """Get display name for comment author (authenticated or anonymous)"""
+        if self.author:
+            return self.author.get_full_name() or self.author.email
+        elif self.author_name:
+            return self.author_name
+        elif self.author_email:
+            return self.author_email
+        else:
+            return "Anonymous"
 
     @property
     def is_reply(self):
@@ -1508,3 +1525,43 @@ class AssetCheckerAnalysis(models.Model):
     @property
     def is_successful(self):
         return self.status == 'completed' and self.results is not None
+
+
+class CustomFieldEditLog(models.Model):
+    """Track custom field changes made through share links (anonymous or authenticated)"""
+    field_value = models.ForeignKey(CustomFieldValue, on_delete=models.CASCADE, related_name='edit_logs')
+    share_link = models.ForeignKey(ShareLink, on_delete=models.CASCADE, related_name='field_edits')
+    
+    # Editor info (either authenticated user or anonymous)
+    editor = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, null=True, blank=True)
+    editor_email = models.EmailField(null=True, blank=True, help_text="Email for anonymous editors")
+    editor_name = models.CharField(max_length=255, null=True, blank=True, help_text="Display name for anonymous editors")
+    
+    # Change tracking
+    field_type = models.CharField(max_length=20, help_text="Type of field that was edited")
+    old_value = models.JSONField(null=True, blank=True, help_text="Previous value before edit (null for new values)")
+    new_value = models.JSONField(help_text="New value after edit")
+    edited_at = models.DateTimeField(auto_now_add=True)
+    
+    class Meta:
+        ordering = ['-edited_at']
+        indexes = [
+            models.Index(fields=['field_value', 'edited_at']),
+            models.Index(fields=['share_link', 'edited_at']),
+            models.Index(fields=['editor', 'edited_at']),
+        ]
+    
+    def __str__(self):
+        editor_display = self.get_editor_display()
+        return f"Field edit by {editor_display} on {self.field_value.field.title}"
+    
+    def get_editor_display(self):
+        """Get display name for the editor (authenticated or anonymous)"""
+        if self.editor:
+            return self.editor.get_full_name() or self.editor.email
+        elif self.editor_name:
+            return self.editor_name
+        elif self.editor_email:
+            return self.editor_email
+        else:
+            return "Anonymous"

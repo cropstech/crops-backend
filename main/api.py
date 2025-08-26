@@ -46,6 +46,7 @@ from .schemas import (
     WorkspaceInviteSchema, ShareLinkSchema, ShareLinkResponseSchema, ShareLinkUpdateSchema,
     WorkspaceCreateSchema, WorkspaceDataSchema, WorkspaceUpdateSchema, 
     WorkspaceInviteIn, WorkspaceInviteOut, InviteAcceptSchema,
+    AnonymousCommentSchema, AnonymousCommentResponseSchema, AnonymousFieldEditSchema, CustomFieldEditResponseSchema,
     AssetSchema, WorkspaceUpdateForm, WorkspaceMemberUpdateSchema,
     WorkspaceMemberSchema,
     ProductSubscriptionSchema,
@@ -550,7 +551,7 @@ def update_share_link(
         "created_at": share_link.created_at
     }
 
-@router.get("/share/{token}")
+@router.get("/share/{token}", auth=None)
 def access_shared_content(request, token: str):
     share_link = get_object_or_404(ShareLink, token=token)
     
@@ -672,7 +673,185 @@ def access_shared_content(request, token: str):
             "show_custom_fields": share_link.show_custom_fields,
             "allow_editing_custom_fields": share_link.allow_editing_custom_fields,
             "allow_downloads": share_link.allow_downloads
+        },
+        "capabilities": {
+            "can_comment_anonymously": share_link.allow_commenting,
+            "can_edit_fields_anonymously": share_link.allow_editing_custom_fields,
+            "anonymous_actions_enabled": True,
+            "optional_user_info": True  # Name and email are optional
         }
+    }
+
+# Anonymous Actions for Share Links
+
+@router.post("/share/{token}/comments", response=AnonymousCommentResponseSchema, auth=None)
+def create_anonymous_comment(request, token: str, data: AnonymousCommentSchema):
+    """Create a comment on shared content (anonymous or authenticated users)"""
+    from .models import Comment
+    from django.utils import timezone
+    
+    share_link = get_object_or_404(ShareLink, token=token)
+    
+    # Validate share link
+    if not share_link.is_valid:
+        raise HttpError(403, "Share link has expired")
+    
+    if not share_link.allow_commenting:
+        raise HttpError(403, "Commenting is not allowed on this shared content")
+    
+    # Validate parent comment if provided
+    parent_comment = None
+    if data.parent_id:
+        parent_comment = get_object_or_404(
+            Comment, 
+            id=data.parent_id,
+            content_type=share_link.content_type,
+            object_id=share_link.object_id
+        )
+    
+    # Create comment data
+    comment_data = {
+        'content_type': share_link.content_type,
+        'object_id': share_link.object_id,
+        'board': share_link.board,
+        'text': data.text,
+        'parent': parent_comment,
+        'annotation_type': data.annotation_type,
+        'x': data.x,
+        'y': data.y,
+        'width': data.width,
+        'height': data.height,
+        'page': data.page
+    }
+    
+    # Set author information based on authentication status
+    if request.user.is_authenticated:
+        comment_data['author'] = request.user
+        comment_data['is_anonymous'] = False
+    else:
+        # Anonymous comment with optional name/email
+        comment_data['author'] = None
+        comment_data['author_email'] = data.author_email if data.author_email else None
+        comment_data['author_name'] = data.author_name if data.author_name else None
+        comment_data['is_anonymous'] = True
+    
+    # Create the comment
+    comment = Comment.objects.create(**comment_data)
+    
+    return {
+        "id": comment.id,
+        "text": comment.text,
+        "author_display": comment.get_author_display(),
+        "author_email": comment.author_email,
+        "author_name": comment.author_name,
+        "is_anonymous": comment.is_anonymous,
+        "parent_id": comment.parent.id if comment.parent else None,
+        "is_reply": comment.is_reply,
+        "annotation_type": comment.annotation_type,
+        "x": comment.x,
+        "y": comment.y,
+        "width": comment.width,
+        "height": comment.height,
+        "page": comment.page,
+        "created_at": comment.created_at,
+        "updated_at": comment.updated_at
+    }
+
+
+@router.put("/share/{token}/custom-fields/{int:field_id}", response=CustomFieldEditResponseSchema, auth=None)
+def update_anonymous_custom_field(request, token: str, field_id: int, data: AnonymousFieldEditSchema):
+    """Update a custom field value on shared content (anonymous or authenticated users)"""
+    from .models import CustomFieldValue, CustomField, CustomFieldEditLog, CustomFieldOption
+    from django.utils import timezone
+    from uuid import UUID
+    
+    share_link = get_object_or_404(ShareLink, token=token)
+    
+    # Validate share link
+    if not share_link.is_valid:
+        raise HttpError(403, "Share link has expired")
+    
+    if not share_link.allow_editing_custom_fields:
+        raise HttpError(403, "Editing custom fields is not allowed on this shared content")
+    
+    # Get the field and validate it belongs to the workspace
+    field = get_object_or_404(CustomField, id=field_id, workspace=share_link.workspace)
+    
+    # Convert object_id to UUID if needed
+    try:
+        if isinstance(share_link.object_id, str):
+            object_uuid = UUID(share_link.object_id)
+        else:
+            object_uuid = share_link.object_id
+    except (ValueError, TypeError):
+        object_uuid = share_link.object_id
+    
+    # Get or create the field value
+    field_value, created = CustomFieldValue.objects.get_or_create(
+        field=field,
+        content_type=share_link.content_type,
+        object_id=object_uuid
+    )
+    
+    # Store old value for audit trail
+    old_value = None if created else {
+        'text_value': field_value.text_value,
+        'date_value': field_value.date_value.isoformat() if field_value.date_value else None,
+        'option_value_id': field_value.option_value.id if field_value.option_value else None,
+        'multi_option_ids': list(field_value.multi_options.values_list('id', flat=True))
+    }
+    
+    # Update the value based on field type
+    new_value = {}
+    if field.field_type == 'TEXT':
+        field_value.text_value = data.text_value
+        new_value = {'text_value': data.text_value}
+    elif field.field_type == 'DATE':
+        field_value.date_value = data.date_value
+        new_value = {'date_value': data.date_value.isoformat() if data.date_value else None}
+    elif field.field_type == 'SINGLE_SELECT':
+        if data.option_value_id:
+            option = get_object_or_404(CustomFieldOption, field=field, id=data.option_value_id)
+            field_value.option_value = option
+        else:
+            field_value.option_value = None
+        new_value = {'option_value_id': data.option_value_id}
+    elif field.field_type == 'MULTI_SELECT':
+        if data.multi_option_ids:
+            options = CustomFieldOption.objects.filter(field=field, id__in=data.multi_option_ids)
+            field_value.multi_options.set(options)
+        else:
+            field_value.multi_options.clear()
+        new_value = {'multi_option_ids': data.multi_option_ids or []}
+    
+    field_value.save()
+    
+    # Create audit log entry
+    log_data = {
+        'field_value': field_value,
+        'share_link': share_link,
+        'field_type': field.field_type,
+        'old_value': old_value,
+        'new_value': new_value
+    }
+    
+    if request.user.is_authenticated:
+        log_data['editor'] = request.user
+    else:
+        # Optional editor info for anonymous users
+        log_data['editor_email'] = data.editor_email if data.editor_email else None
+        log_data['editor_name'] = data.editor_name if data.editor_name else None
+    
+    edit_log = CustomFieldEditLog.objects.create(**log_data)
+    
+    return {
+        "id": field_value.id,
+        "field_id": field.id,
+        "field_title": field.title,
+        "field_type": field.field_type,
+        "value_display": str(field_value.get_value()) if field_value.get_value() else "",
+        "updated_by": edit_log.get_editor_display(),
+        "updated_at": edit_log.edited_at
     }
 
 @router.post("/workspaces/{uuid:workspace_id}/invites", response=WorkspaceInviteOut)
