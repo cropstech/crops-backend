@@ -572,14 +572,49 @@ def access_shared_content(request, token: str):
         board_data = {
             "id": str(share_link.board.id),
             "name": share_link.board.name,
-            "view_type": share_link.board.view_type
+            "default_view": share_link.board.default_view,
+            "description": share_link.board.description
         }
+    
+    # Include comments if show_comments is enabled
+    comments_data = []
+    if share_link.show_comments and share_link.content_type.model in ['asset', 'board']:
+        from .schemas import CommentSchema
+        from .models import Comment
+        
+        # Get comments for the content object with proper board context
+        comments = Comment.objects.filter(
+            content_type=share_link.content_type,
+            object_id=share_link.object_id,
+            board=share_link.board  # This filters by board context (None for global, Board for board-specific)
+        ).select_related('author', 'parent', 'board').prefetch_related('mentioned_users', 'replies').order_by('created_at')
+        
+        comments_data = [CommentSchema.from_orm(comment) for comment in comments]
+    
+    # Include custom field values if show_custom_fields is enabled
+    custom_fields_data = []
+    if share_link.show_custom_fields and share_link.content_type.model in ['asset', 'board']:
+        from .schemas import CustomFieldValueSchema
+        from .models import CustomFieldValue
+        
+        # Get custom field values for the content object
+        custom_field_values = CustomFieldValue.objects.filter(
+            content_type=share_link.content_type,
+            object_id=share_link.object_id
+        ).select_related(
+            'field',
+            'option_value'
+        ).prefetch_related('multi_options')
+        
+        custom_fields_data = [CustomFieldValueSchema.from_orm(field_value) for field_value in custom_field_values]
     
     return {
         "content_type": share_link.content_type.model,
         "content": content_data,
         "board": board_data,
         "board_id": str(share_link.board.id) if share_link.board else None,
+        "comments": comments_data,
+        "custom_fields": custom_fields_data,
         "share_settings": {
             "allow_commenting": share_link.allow_commenting,
             "show_comments": share_link.show_comments,
