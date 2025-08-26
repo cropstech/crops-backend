@@ -240,6 +240,7 @@ class ShareLink(models.Model):
     show_comments = models.BooleanField(default=False, help_text="Show existing comments to shared users")
     show_custom_fields = models.BooleanField(default=False, help_text="Show custom fields to shared users")
     allow_editing_custom_fields = models.BooleanField(default=False, help_text="Allow shared users to edit custom fields")
+    allow_downloads = models.BooleanField(default=True, help_text="Allow shared users to download the content")
     
     created_at = models.DateTimeField(auto_now_add=True)
     

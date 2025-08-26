@@ -397,7 +397,7 @@ def get_or_create_share_link(
             object_id=object_id,
             board=board,
             # expires_at, password remain None (default values)
-            # Granular controls use model defaults (False, False, False, False)
+            # Granular controls use model defaults (False, False, False, False, True)
         )
     
     return {
@@ -411,6 +411,7 @@ def get_or_create_share_link(
         "show_comments": share_link.show_comments,
         "show_custom_fields": share_link.show_custom_fields,
         "allow_editing_custom_fields": share_link.allow_editing_custom_fields,
+        "allow_downloads": share_link.allow_downloads,
         "created_at": share_link.created_at
     }
 
@@ -448,7 +449,8 @@ def create_share_link(
             'allow_commenting': data.allow_commenting,
             'show_comments': data.show_comments,
             'show_custom_fields': data.show_custom_fields,
-            'allow_editing_custom_fields': data.allow_editing_custom_fields
+            'allow_editing_custom_fields': data.allow_editing_custom_fields,
+            'allow_downloads': data.allow_downloads
         }
     )
     
@@ -460,6 +462,7 @@ def create_share_link(
         share_link.show_comments = data.show_comments
         share_link.show_custom_fields = data.show_custom_fields
         share_link.allow_editing_custom_fields = data.allow_editing_custom_fields
+        share_link.allow_downloads = data.allow_downloads
         share_link.save()
     
     return {
@@ -473,6 +476,7 @@ def create_share_link(
         "show_comments": share_link.show_comments,
         "show_custom_fields": share_link.show_custom_fields,
         "allow_editing_custom_fields": share_link.allow_editing_custom_fields,
+        "allow_downloads": share_link.allow_downloads,
         "created_at": share_link.created_at
     }
 
@@ -526,6 +530,8 @@ def update_share_link(
         share_link.show_custom_fields = data.show_custom_fields
     if data.allow_editing_custom_fields is not None:
         share_link.allow_editing_custom_fields = data.allow_editing_custom_fields
+    if data.allow_downloads is not None:
+        share_link.allow_downloads = data.allow_downloads
         
     share_link.save()
     
@@ -540,6 +546,7 @@ def update_share_link(
         "show_comments": share_link.show_comments,
         "show_custom_fields": share_link.show_custom_fields,
         "allow_editing_custom_fields": share_link.allow_editing_custom_fields,
+        "allow_downloads": share_link.allow_downloads,
         "created_at": share_link.created_at
     }
 
@@ -591,22 +598,66 @@ def access_shared_content(request, token: str):
         
         comments_data = [CommentSchema.from_orm(comment) for comment in comments]
     
-    # Include custom field values if show_custom_fields is enabled
+    # Include custom fields if show_custom_fields is enabled
     custom_fields_data = []
     if share_link.show_custom_fields and share_link.content_type.model in ['asset', 'board']:
-        from .schemas import CustomFieldValueSchema
-        from .models import CustomFieldValue
+        from .schemas import CustomFieldValueSchema, CustomFieldSchema
+        from .models import CustomFieldValue, CustomField
+        from uuid import UUID
         
-        # Get custom field values for the content object
-        custom_field_values = CustomFieldValue.objects.filter(
+        # Convert object_id to UUID if it's a string (since CustomFieldValue.object_id is UUIDField)
+        try:
+            if isinstance(share_link.object_id, str):
+                object_uuid = UUID(share_link.object_id)
+            else:
+                object_uuid = share_link.object_id
+        except (ValueError, TypeError):
+            # Fallback to original value if conversion fails
+            object_uuid = share_link.object_id
+        
+        # Get all custom fields available in this workspace
+        all_workspace_fields = CustomField.objects.filter(
+            workspace=share_link.workspace
+        ).prefetch_related('options').order_by('order')
+        
+        # Get existing custom field values for the content object
+        existing_values = CustomFieldValue.objects.filter(
             content_type=share_link.content_type,
-            object_id=share_link.object_id
+            object_id=object_uuid
         ).select_related(
             'field',
             'option_value'
         ).prefetch_related('multi_options')
         
-        custom_fields_data = [CustomFieldValueSchema.from_orm(field_value) for field_value in custom_field_values]
+        # Create a map of field_id -> value for quick lookup
+        values_by_field = {value.field_id: value for value in existing_values}
+        
+        # For each workspace field, either include its value or show it as empty
+        for field in all_workspace_fields:
+            if field.id in values_by_field:
+                # Field has a value set
+                custom_fields_data.append(CustomFieldValueSchema.from_orm(values_by_field[field.id]))
+            else:
+                # Field doesn't have a value - create an empty representation
+                custom_fields_data.append({
+                    "id": None,  # No CustomFieldValue ID since it doesn't exist
+                    "field_id": field.id,
+                    "content_type": share_link.content_type.model,
+                    "object_id": object_uuid,
+                    "text_value": None,
+                    "date_value": None,
+                    "option_value": None,
+                    "multi_options": [],
+                    "value_display": "",
+                    # Include field metadata for context
+                    "field": {
+                        "id": field.id,
+                        "title": field.title,
+                        "field_type": field.field_type,
+                        "description": field.description,
+                        "options": [{"id": opt.id, "label": opt.label, "color": opt.color, "order": opt.order} for opt in field.options.all()]
+                    }
+                })
     
     return {
         "content_type": share_link.content_type.model,
@@ -619,7 +670,8 @@ def access_shared_content(request, token: str):
             "allow_commenting": share_link.allow_commenting,
             "show_comments": share_link.show_comments,
             "show_custom_fields": share_link.show_custom_fields,
-            "allow_editing_custom_fields": share_link.allow_editing_custom_fields
+            "allow_editing_custom_fields": share_link.allow_editing_custom_fields,
+            "allow_downloads": share_link.allow_downloads
         }
     }
 

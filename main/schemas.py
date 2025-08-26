@@ -87,6 +87,7 @@ class ShareLinkSchema(Schema):
     show_comments: Optional[bool] = False
     show_custom_fields: Optional[bool] = False
     allow_editing_custom_fields: Optional[bool] = False
+    allow_downloads: Optional[bool] = True
 
 class ShareLinkResponseSchema(Schema):
     id: int
@@ -100,6 +101,7 @@ class ShareLinkResponseSchema(Schema):
     show_comments: bool
     show_custom_fields: bool
     allow_editing_custom_fields: bool
+    allow_downloads: bool
     created_at: datetime
 
 class ShareLinkUpdateSchema(Schema):
@@ -111,6 +113,7 @@ class ShareLinkUpdateSchema(Schema):
     show_comments: Optional[bool] = None
     show_custom_fields: Optional[bool] = None
     allow_editing_custom_fields: Optional[bool] = None
+    allow_downloads: Optional[bool] = None
 
 
 class WorkspaceInviteIn(Schema):
