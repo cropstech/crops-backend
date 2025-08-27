@@ -234,6 +234,7 @@ class ShareLink(models.Model):
     # Optional settings
     expires_at = models.DateTimeField(null=True, blank=True)
     password = models.CharField(max_length=128, null=True, blank=True)
+    is_active = models.BooleanField(default=True, help_text="Whether this share link is active and accessible")
     
     # Granular sharing controls
     allow_commenting = models.BooleanField(default=False, help_text="Allow shared users to add comments")
@@ -252,6 +253,8 @@ class ShareLink(models.Model):
 
     @property
     def is_valid(self):
+        if not self.is_active:
+            return False
         if self.expires_at and self.expires_at < timezone.now():
             return False
         return True

@@ -408,6 +408,7 @@ def get_or_create_share_link(
         "board_id": str(share_link.board.id) if share_link.board else None,
         "expires_at": share_link.expires_at,
         "password": share_link.password,
+        "is_active": share_link.is_active,
         "allow_commenting": share_link.allow_commenting,
         "show_comments": share_link.show_comments,
         "show_custom_fields": share_link.show_custom_fields,
@@ -447,6 +448,7 @@ def create_share_link(
             'created_by': request.user,
             'expires_at': data.expires_at,
             'password': data.password,
+            'is_active': data.is_active,
             'allow_commenting': data.allow_commenting,
             'show_comments': data.show_comments,
             'show_custom_fields': data.show_custom_fields,
@@ -459,6 +461,7 @@ def create_share_link(
     if not created:
         share_link.expires_at = data.expires_at
         share_link.password = data.password
+        share_link.is_active = data.is_active
         share_link.allow_commenting = data.allow_commenting
         share_link.show_comments = data.show_comments
         share_link.show_custom_fields = data.show_custom_fields
@@ -473,6 +476,7 @@ def create_share_link(
         "board_id": str(share_link.board.id) if share_link.board else None,
         "expires_at": share_link.expires_at,
         "password": share_link.password,
+        "is_active": share_link.is_active,
         "allow_commenting": share_link.allow_commenting,
         "show_comments": share_link.show_comments,
         "show_custom_fields": share_link.show_custom_fields,
@@ -523,6 +527,8 @@ def update_share_link(
         share_link.expires_at = data.expires_at
     if data.password is not None:
         share_link.password = data.password
+    if data.is_active is not None:
+        share_link.is_active = data.is_active
     if data.allow_commenting is not None:
         share_link.allow_commenting = data.allow_commenting
     if data.show_comments is not None:
@@ -543,6 +549,7 @@ def update_share_link(
         "board_id": str(share_link.board.id) if share_link.board else None,
         "expires_at": share_link.expires_at,
         "password": share_link.password,
+        "is_active": share_link.is_active,
         "allow_commenting": share_link.allow_commenting,
         "show_comments": share_link.show_comments,
         "show_custom_fields": share_link.show_custom_fields,
@@ -556,7 +563,12 @@ def access_shared_content(request, token: str):
     share_link = get_object_or_404(ShareLink, token=token)
     
     if not share_link.is_valid:
-        raise HttpError(403, "This share link has expired")
+        if not share_link.is_active:
+            raise HttpError(403, "This share link has been disabled")
+        elif share_link.expires_at and share_link.expires_at < timezone.now():
+            raise HttpError(403, "This share link has expired")
+        else:
+            raise HttpError(403, "This share link is not accessible")
     
     # Serialize the content object based on its type
     content_data = None
@@ -694,7 +706,12 @@ def create_anonymous_comment(request, token: str, data: AnonymousCommentSchema):
     
     # Validate share link
     if not share_link.is_valid:
-        raise HttpError(403, "Share link has expired")
+        if not share_link.is_active:
+            raise HttpError(403, "This share link has been disabled")
+        elif share_link.expires_at and share_link.expires_at < timezone.now():
+            raise HttpError(403, "This share link has expired")
+        else:
+            raise HttpError(403, "This share link is not accessible")
     
     if not share_link.allow_commenting:
         raise HttpError(403, "Commenting is not allowed on this shared content")
@@ -769,7 +786,12 @@ def update_anonymous_custom_field(request, token: str, field_id: int, data: Anon
     
     # Validate share link
     if not share_link.is_valid:
-        raise HttpError(403, "Share link has expired")
+        if not share_link.is_active:
+            raise HttpError(403, "This share link has been disabled")
+        elif share_link.expires_at and share_link.expires_at < timezone.now():
+            raise HttpError(403, "This share link has expired")
+        else:
+            raise HttpError(403, "This share link is not accessible")
     
     if not share_link.allow_editing_custom_fields:
         raise HttpError(403, "Editing custom fields is not allowed on this shared content")

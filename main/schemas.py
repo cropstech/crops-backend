@@ -82,6 +82,7 @@ class ShareLinkSchema(Schema):
     board_id: Optional[str] = None  # Optional - for board-specific context or null for global context
     expires_at: Optional[datetime] = None
     password: Optional[str] = None
+    is_active: Optional[bool] = True
     # Granular sharing controls
     allow_commenting: Optional[bool] = False
     show_comments: Optional[bool] = False
@@ -96,6 +97,7 @@ class ShareLinkResponseSchema(Schema):
     board_id: Optional[str] = None
     expires_at: Optional[datetime] = None
     password: Optional[str] = None
+    is_active: bool
     # Granular sharing controls
     allow_commenting: bool
     show_comments: bool
@@ -108,6 +110,7 @@ class ShareLinkUpdateSchema(Schema):
     board_id: Optional[str] = None
     expires_at: Optional[datetime] = None
     password: Optional[str] = None
+    is_active: Optional[bool] = None
     # Granular sharing controls
     allow_commenting: Optional[bool] = None
     show_comments: Optional[bool] = None
