@@ -645,13 +645,26 @@ def access_shared_content(request, token: str):
         # Create a map of field_id -> value for quick lookup
         values_by_field = {value.field_id: value for value in existing_values}
         
-        # For each workspace field, either include its value or show it as empty
+        # For each workspace field, include its value (if any) and field definition
         for field in all_workspace_fields:
             if field.id in values_by_field:
-                # Field has a value set
-                custom_fields_data.append(CustomFieldValueSchema.from_orm(values_by_field[field.id]))
+                # Field has a value set - get the existing value and enhance it with field metadata
+                field_value = values_by_field[field.id]
+                field_value_data = CustomFieldValueSchema.from_orm(field_value)
+                
+                # Convert to dict and add field metadata
+                field_data = field_value_data if isinstance(field_value_data, dict) else field_value_data.dict()
+                field_data["field"] = {
+                    "id": field.id,
+                    "title": field.title,
+                    "field_type": field.field_type,
+                    "description": field.description,
+                    "order": field.order,
+                    "options": [{"id": opt.id, "label": opt.label, "color": opt.color, "order": opt.order} for opt in field.options.all()]
+                }
+                custom_fields_data.append(field_data)
             else:
-                # Field doesn't have a value - create an empty representation
+                # Field doesn't have a value - create an empty representation with full field metadata
                 custom_fields_data.append({
                     "id": None,  # No CustomFieldValue ID since it doesn't exist
                     "field_id": field.id,
@@ -662,12 +675,13 @@ def access_shared_content(request, token: str):
                     "option_value": None,
                     "multi_options": [],
                     "value_display": "",
-                    # Include field metadata for context
+                    # Include full field metadata for frontend display
                     "field": {
                         "id": field.id,
                         "title": field.title,
                         "field_type": field.field_type,
                         "description": field.description,
+                        "order": field.order,
                         "options": [{"id": opt.id, "label": opt.label, "color": opt.color, "order": opt.order} for opt in field.options.all()]
                     }
                 })
