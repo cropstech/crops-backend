@@ -56,7 +56,7 @@ def send_invitation_email(invitation):
         'workspace_name': invitation.workspace.name,
         'invited_by': invitation.invited_by.get_full_name() or invitation.invited_by.email,
         'role': invitation.get_role_display(),
-        'accept_url': f"{settings.FRONTEND_URL}/invite/{invitation.token}",
+        'accept_url': f"{settings.FRONTEND_URL}/a/invite/{invitation.token}",
         'expires_at': invitation.expires_at,
     }
     
@@ -65,7 +65,7 @@ def send_invitation_email(invitation):
     plain_message = f"""
     You've been invited to join {invitation.workspace.name} by {invitation.invited_by.get_full_name() or invitation.invited_by.email}.
     Role: {invitation.get_role_display()}
-    Click here to accept: {settings.FRONTEND_URL}/invite/{invitation.token}
+    Click here to accept: {settings.FRONTEND_URL}/a/invite/{invitation.token}
     This invitation expires on {invitation.expires_at}
     """
     
