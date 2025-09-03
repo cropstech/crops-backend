@@ -110,19 +110,23 @@ def handle_subscription_created(sender, payload, occurred_at, **kwargs):
 #         pass
 
 @receiver(subscription_updated)
-def handle_subscription_updated(sender, subscription, **kwargs):
+def handle_subscription_updated(sender, payload, occurred_at, **kwargs):
     """Handle subscription updated event"""
-    logger.info(f"Subscription updated: {subscription.id}")
+    logger.info(f"Subscription updated: {payload.id}")
     
     # Add a small delay to ensure the subscription is fully processed
     time.sleep(1)
     
-    # Sync the subscription to get the latest data
+    # Get the subscription object from the database
     try:
+        subscription = Subscription.objects.get(id=payload.id)
+        # Sync the subscription to get the latest data
         subscription.sync_from_paddle()
         logger.info(f"Subscription {subscription.id} synced successfully")
+    except Subscription.DoesNotExist:
+        logger.error(f"Subscription {payload.id} not found in database")
     except Exception as e:
-        logger.error(f"Failed to sync subscription {subscription.id}: {str(e)}")
+        logger.error(f"Failed to sync subscription {payload.id}: {str(e)}")
 
 # Make sure signals are loaded
 default_app_config = 'main.apps.MainConfig' 
