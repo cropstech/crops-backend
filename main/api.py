@@ -43,9 +43,9 @@ from .models import (
     WorkspaceMember
 )
 from .schemas import (
-    WorkspaceInviteSchema, ShareLinkSchema, ShareLinkResponseSchema, ShareLinkUpdateSchema,
+    WorkspaceInviteSchema, WorkspaceBulkInviteSchema, ShareLinkSchema, ShareLinkResponseSchema, ShareLinkUpdateSchema,
     WorkspaceCreateSchema, WorkspaceDataSchema, WorkspaceUpdateSchema, 
-    WorkspaceInviteIn, WorkspaceInviteOut, InviteAcceptSchema,
+    WorkspaceInviteIn, WorkspaceInviteOut, WorkspaceBulkInviteOut, InviteAcceptSchema,
     AnonymousCommentSchema, AnonymousCommentResponseSchema, AnonymousFieldEditSchema, CustomFieldEditResponseSchema,
     AssetSchema, WorkspaceUpdateForm, WorkspaceMemberUpdateSchema,
     WorkspaceMemberSchema,
@@ -118,7 +118,7 @@ logger = logging.getLogger(__name__)
 
 
 
-@router.post("/workspaces/create", response=WorkspaceDataSchema)
+@router.post("/workspaces", response=WorkspaceDataSchema)
 def create_workspace(request, data: WorkspaceCreateSchema):
     # Generate avatar if none provided
     if not data.avatar:
@@ -906,6 +906,42 @@ def create_workspace_invite(request, workspace_id: UUID, data: WorkspaceInviteSc
     send_invitation_email(invitation)
     
     return invitation
+
+@router.post("/workspaces/{uuid:workspace_id}/invites/bulk", response=WorkspaceBulkInviteOut)
+@decorate_view(check_workspace_permission(WorkspaceMember.Role.ADMIN))
+def create_workspace_bulk_invite(request, workspace_id: UUID, data: WorkspaceBulkInviteSchema):
+    workspace = get_object_or_404(Workspace, id=workspace_id)
+    created_invitations = []
+    
+    with transaction.atomic():
+        for invite_data in data.invites:
+            try:
+                invitation = WorkspaceInvitation.objects.create(
+                    workspace=workspace,
+                    email=invite_data.email,
+                    role=invite_data.role,
+                    invited_by=request.user,
+                    expires_at=invite_data.expires_at or timezone.now() + timedelta(days=7)
+                )
+                created_invitations.append(invitation)
+            except Exception as e:
+                # Log the error but continue with other invitations
+                logging.error(f"Failed to create invitation for {invite_data.email}: {str(e)}")
+                continue
+    
+    # Send emails for all successfully created invitations
+    for invitation in created_invitations:
+        try:
+            send_invitation_email(invitation)
+        except Exception as e:
+            # Log email sending errors but don't fail the request
+            logging.error(f"Failed to send invitation email to {invitation.email}: {str(e)}")
+    
+    return {
+        "invites": created_invitations,
+        "success_count": len(created_invitations),
+        "total_count": len(data.invites)
+    }
 
 @router.get("/workspaces/{uuid:workspace_id}/invites", response=List[WorkspaceInviteOut])
 @decorate_view(check_workspace_permission(WorkspaceMember.Role.COMMENTER))

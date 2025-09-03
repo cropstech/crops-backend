@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <style>
+        body { 
+            font-family: sans-serif; 
+            line-height: 1.6; 
+            color: #333;
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .button {
+            display: inline-block;
+            padding: 12px 24px;
+            background-color: #4CAF50;
+            color: white !important;
+            text-decoration: none;
+            border-radius: 6px;
+            font-weight: bold;
+            margin: 20px 0;
+        }
+        .button:hover {
+            background-color: #45a049;
+        }
+        .fallback-link {
+            margin-top: 20px;
+            padding: 15px;
+            background-color: #f9f9f9;
+            border-radius: 4px;
+            font-size: 14px;
+            color: #666;
+        }
+        .fallback-link a {
+            color: #4CAF50;
+            word-break: break-all;
+        }
+    </style>
+</head>
+<body>
+    <h2>Verify your email address</h2>
+    
+    <p>Please verify your email address to complete your account setup.</p>
+    
+    <p>
+        <a href="{{ verification_url }}" class="button" target="_blank">Verify Email Address</a>
+    </p>
+    
+    <div class="fallback-link">
+        <strong>If the button above doesn't work, you can copy and paste this link into your browser:</strong><br>
+        <a href="{{ verification_url }}" target="_blank">{{ verification_url }}</a>
+    </div>
+    
+    <p><em>This verification link will expire in 24 hours.</em></p>
+    
+    <p>If you didn't create an account, you can safely ignore this email.</p>
+</body>
+</html>

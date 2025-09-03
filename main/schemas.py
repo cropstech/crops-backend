@@ -76,6 +76,9 @@ class WorkspaceInviteSchema(Schema):
     role: str
     expires_at: Optional[datetime] = None
 
+class WorkspaceBulkInviteSchema(Schema):
+    invites: List[WorkspaceInviteSchema]
+
 class ShareLinkSchema(Schema):
     content_type: str  # e.g., 'asset', 'collection'
     object_id: str  # Support both integers and UUIDs as strings
@@ -133,6 +136,11 @@ class WorkspaceInviteOut(Schema):
     model_config = ConfigDict(
         from_attributes=True
     )
+
+class WorkspaceBulkInviteOut(Schema):
+    invites: List[WorkspaceInviteOut]
+    success_count: int
+    total_count: int
     
 class InviteAcceptSchema(Schema):
     token: str
