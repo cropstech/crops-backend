@@ -1464,8 +1464,8 @@ def get_subscription_plans(request):
     
     plans = []
     for product in products:
-        price = product.prices.first()  # Get first price for the product
-        if price:
+        # Get all prices for the product, not just the first one
+        for price in product.prices.all():
             data = price.get_data()  # Get the Paddle price data
             product_data = product.get_data()  # Get the Paddle product data
             
@@ -1603,7 +1603,7 @@ def get_subscription_transactions(request, workspace_id: UUID):
 @decorate_view(check_workspace_permission(WorkspaceMember.Role.ADMIN))
 def get_subscription_update_payment_transaction(request, workspace_id: UUID):
     workspace = get_object_or_404(Workspace, id=workspace_id)
-    subscription = workspace.subscriptions.first()
+    subscription = workspace.subscription
     
     if not subscription:
         raise HttpError(404, "No subscription found")

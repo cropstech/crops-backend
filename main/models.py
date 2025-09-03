@@ -60,15 +60,10 @@ class Workspace(models.Model):
         """Get detailed subscription information"""
         now = timezone.now()
         
-        # Debug logging
-        all_subs = self.subscriptions.all()
-        # logger.info(f"Workspace {self.id} subscriptions count: {all_subs.count()}")
-        
-        subscription = all_subs.first()
-        # logger.info(f"Subscription: {subscription}")
+        # Use the subscription property which excludes canceled subscriptions
+        subscription = self.subscription
         
         if not subscription:
-            # logger.warning(f"No subscription found for workspace {self.id}")
             return {
                 'status': 'free',
                 'billing_details': None
@@ -77,12 +72,6 @@ class Workspace(models.Model):
         # logger.info(f"Subscription data: {subscription.data}")
         ends_at = subscription.data.get('ends_at')
         scheduled_change = subscription.data.get('scheduled_change')
-        
-        if subscription.status == 'canceled' and ends_at and ends_at < now.isoformat():
-            return {
-                'status': 'free',
-                'billing_details': None
-            }
         
         # Safely get billing cycle data
         billing_cycle = subscription.data.get('billing_cycle', {})
@@ -108,6 +97,11 @@ class Workspace(models.Model):
         
         # logger.info(f"Return data: {return_data}")
         return return_data
+
+    @property
+    def subscription(self):
+        """Get the active subscription (excludes canceled subscriptions)"""
+        return self.subscriptions.exclude(status='canceled').first()
 
     @property
     def subscription_status(self):
