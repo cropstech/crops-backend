@@ -227,13 +227,24 @@ def create_workspace(request, data: WorkspaceCreateSchema):
                     configuration=action_data["configuration"]
                 )
     
+    # Set user_role for the response
+    member = WorkspaceMember.objects.get(workspace=workspace, user=request.user)
+    workspace.user_role = member.role
     return workspace
 
 @router.get("/workspaces", response=List[WorkspaceDataSchema])
 def list_workspaces(request):
-    workspaces = Workspace.objects.filter(
-        workspacemember__user=request.user
-    )
+    # Get workspaces with their membership info in a single query
+    workspace_members = WorkspaceMember.objects.filter(
+        user=request.user
+    ).select_related('workspace')
+    
+    workspaces = []
+    for member in workspace_members:
+        workspace = member.workspace
+        workspace.user_role = member.role
+        workspaces.append(workspace)
+    
     return workspaces
 
 @router.get("/workspaces/{uuid:workspace_id}", response=WorkspaceDataSchema)
