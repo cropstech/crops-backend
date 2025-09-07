@@ -425,7 +425,7 @@ def _extract_issues_from_results(action: str, results: Dict) -> List[str]:
             if action == 'grammar':
                 # Filter by check_type
                 filtered_issues = [issue for issue in all_issues if issue.get('check_type') == 'grammar']
-                issues = [issue.get('message', 'Grammar issue detected') for issue in filtered_issues]
+                issues = [_format_grammar_issue_message(issue) for issue in filtered_issues]
                 
             elif action == 'color_contrast':
                 # Filter by check_type and issue_type
@@ -550,6 +550,31 @@ def _extract_issues_from_results(action: str, results: Dict) -> List[str]:
         issues.append(f"Error parsing results: {str(e)}")
     
     return issues
+
+def _format_grammar_issue_message(issue: Dict[str, Any]) -> str:
+    """
+    Format a concise message for grammar issues including suggestions.
+    
+    Args:
+        issue: The grammar issue dict from webhook payload
+        
+    Returns:
+        Concise message with suggestions
+    """
+    details = issue.get('details', {})
+    suggestions = details.get('suggestions', [])
+    
+    # Create a simple, friendly message
+    if suggestions:
+        if len(suggestions) == 1:
+            return f"Possible spelling mistake, did you mean \"{suggestions[0]}\"?"
+        else:
+            # Show first 2 suggestions
+            suggestions_text = "\" or \"".join(suggestions[:2])
+            return f"Possible spelling mistake, did you mean \"{suggestions_text}\"?"
+    else:
+        # Fallback to original message if no suggestions
+        return issue.get('message', 'Grammar issue detected')
 
 def get_ai_action_results(content_object: Any) -> Dict[str, List[Dict]]:
     """

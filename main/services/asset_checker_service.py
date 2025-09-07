@@ -326,6 +326,11 @@ class AssetCheckerService:
                 check_type = issue.get('check_type', 'unknown')
                 issue_type = issue.get('issue_type', 'unknown')
                 location = issue.get('location')
+                details = issue.get('details', {})
+                
+                # Enhanced message formatting for grammar issues
+                if check_type == 'grammar' and issue_type == 'grammar_error':
+                    message = self._format_grammar_comment_message(issue)
                 
                 # Prepare annotation data from location if available
                 annotation_type = 'NONE'
@@ -405,6 +410,19 @@ class AssetCheckerService:
                         y = float(top) * 100
                         logger.info(f"Setting point annotation for {issue_type}: ({x}%, {y}%)")
                 
+                # Handle grammar text annotation using offset and length
+                elif check_type == 'grammar' and location and isinstance(location, dict):
+                    offset = location.get('offset')
+                    length = location.get('length')
+                    
+                    # For text-based annotations, we use offset and length as text selection
+                    if offset is not None and length is not None:
+                        annotation_type = 'TEXT'
+                        # Store offset and length in x and y fields for text annotation
+                        x = float(offset)
+                        y = float(length)
+                        logger.info(f"Setting text annotation for grammar issue: offset={offset}, length={length}")
+                
                 # Create comment with board context and location annotation if available
                 comment = Comment.objects.create(
                     content_type=content_type,
@@ -438,6 +456,31 @@ class AssetCheckerService:
             
         except Exception as e:
             logger.error(f"Failed to create comments from results: {str(e)}")
+    
+    def _format_grammar_comment_message(self, issue: Dict[str, Any]) -> str:
+        """
+        Format a concise comment message for grammar issues including suggestions.
+        
+        Args:
+            issue: The grammar issue dict from webhook payload
+            
+        Returns:
+            Concise comment message with suggestions
+        """
+        details = issue.get('details', {})
+        suggestions = details.get('suggestions', [])
+        
+        # Create a simple, friendly message
+        if suggestions:
+            if len(suggestions) == 1:
+                return f"Possible spelling mistake, did you mean \"{suggestions[0]}\"?"
+            else:
+                # Show first 2 suggestions
+                suggestions_text = "\" or \"".join(suggestions[:2])
+                return f"Possible spelling mistake, did you mean \"{suggestions_text}\"?"
+        else:
+            # Fallback to original message if no suggestions
+            return issue.get('message', 'Grammar issue detected')
     
     def _update_ai_action_results(self, analysis: 'AssetCheckerAnalysis', results: Dict[str, Any]) -> None:
         """Update AI action results without creating duplicate comments"""
