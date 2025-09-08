@@ -1070,7 +1070,7 @@ class EventType(models.TextChoices):
     FIELD_CHANGE_IN_FOLLOWED_BOARD = 'field_change_in_followed_board', 'Custom field changes to followed boards & their assets'
     
     # Legacy/Additional events (keep for future use)
-    AI_CHECK_COMPLETED = 'ai_check_completed', 'AI Check Completed'
+    AI_CHECK_COMPLETED = 'ai_check_completed', 'AI Review Completed'
     ASSET_FAVORITED = 'asset_favorited', 'Asset Favorited'
 
 

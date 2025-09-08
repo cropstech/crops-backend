@@ -139,8 +139,8 @@ def create_workspace(request, data: WorkspaceCreateSchema):
         # Create default board FIRST (before workspace member)
         default_board = Board.objects.create(
             workspace=workspace,
-            name="General",
-            description="Default board for general content",
+            name="Getting Started",
+            description="This is your Getting Started board. Use learn more about the app and get started with your first assets.",
             created_by=request.user
         )
         
@@ -168,7 +168,7 @@ def create_workspace(request, data: WorkspaceCreateSchema):
             #     "ai_actions": []
             # },
             {
-                "label": "AI Check",
+                "label": "AI Review",
                 "color": "#E64A19",
                 "order": 1,
                 "ai_actions": [

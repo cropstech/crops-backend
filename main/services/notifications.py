@@ -355,7 +355,7 @@ class NotificationService:
     @staticmethod
     def notify_ai_check_completed(comments, asset):
         """Handle notifications when AI analysis comments are created on an asset"""
-        logger.info(f"Processing AI check notifications for {len(comments)} comments on asset {asset.id}")
+        logger.info(f"Processing AI Review notifications for {len(comments)} comments on asset {asset.id}")
         
         # Check if comments are board-scoped or global
         board_context = None
@@ -374,7 +374,7 @@ class NotificationService:
             logger.info(f"Global AI analysis across {len(boards)} boards")
         
         if not boards:
-            logger.warning(f"Asset {asset.id} is not in any boards, skipping AI check notifications")
+            logger.warning(f"Asset {asset.id} is not in any boards, skipping AI Review notifications")
             return
         
         # Get AI system user for notifications
@@ -402,7 +402,7 @@ class NotificationService:
             logger.info(f"User {user.email} preference for {EventType.AI_CHECK_COMPLETED}: {event_pref}")
             
             if event_pref.get('in_app_enabled', True):
-                logger.info(f"Sending AI check notification to {user.email} for asset {asset.id}")
+                logger.info(f"Sending AI Review notification to {user.email} for asset {asset.id}")
                 
                 # Extract check types from comment headers for rich notification data
                 check_types = []
@@ -435,6 +435,6 @@ class NotificationService:
                         'boards': [board.name for board in boards]  # Show which boards contain this asset
                     }
                 )
-                logger.info(f"AI check notification sent successfully to {user.email}")
+                logger.info(f"AI Review notification sent successfully to {user.email}")
             else:
-                logger.info(f"User {user.email} has in-app notifications disabled for AI checks") 
+                logger.info(f"User {user.email} has in-app notifications disabled for AI Review") 
