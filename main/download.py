@@ -305,4 +305,90 @@ class DownloadManager:
             
         except Exception as e:
             logger.error(f"Error creating ZIP archive: {str(e)}")
+            raise
+
+    @classmethod
+    def create_zip_archive_with_structure(cls, file_list: List[dict], zip_name: str = None) -> dict:
+        """
+        Create a ZIP archive from a pre-built file list with folder structure
+        
+        Args:
+            file_list: List of dicts with 'key' (S3 path) and 'filename' (ZIP path)
+            zip_name: Optional name for the ZIP file
+            
+        Returns:
+            dict with download_url, expires_at, file_count, and zip_size
+        """
+        bucket = settings.AWS_STORAGE_CDN_BUCKET_NAME
+        
+        # Generate a unique key for the output ZIP file
+        timestamp = timezone.now().strftime("%Y%m%d-%H%M%S")
+        zip_name = zip_name or f"archive-{timestamp}"
+        output_key = f"temp/zips/{zip_name}-{uuid.uuid4()}.zip"
+        
+        try:
+            # Prepare payload for Lambda
+            payload = {
+                "source_bucket": bucket,
+                "output_bucket": bucket,
+                "output_key": output_key,
+                "files": file_list,
+                "generate_presigned_url": True,
+                "presigned_url_expiry": cls.URL_EXPIRY
+            }
+            
+            # Invoke Lambda function to create ZIP
+            logger.info(f"Invoking Lambda to create ZIP archive of {len(file_list)} files with folder structure")
+            logger.info(f"Lambda payload: {json.dumps(payload, indent=2)}")
+            response = lambda_client.invoke(
+                FunctionName=cls.LAMBDA_FUNCTION_NAME,
+                InvocationType='RequestResponse',  # Synchronous execution
+                Payload=json.dumps(payload)
+            )
+            logger.info(f"Lambda invocation response status: {response['StatusCode']}")
+            
+            # Parse response
+            try:
+                response_payload = json.loads(response['Payload'].read().decode('utf-8'))
+            except (json.JSONDecodeError, UnicodeDecodeError) as e:
+                logger.error(f"Failed to parse Lambda response: {str(e)}")
+                logger.error(f"Raw response: {response.get('Payload', 'No payload')}")
+                raise Exception(f"Lambda returned invalid response, possibly due to timeout or error: {str(e)}")
+            
+            # Check if response payload is empty (can happen with timeouts)
+            if not response_payload:
+                logger.error("Lambda returned empty response, likely due to timeout")
+                raise Exception("Lambda function failed to return a response, likely due to timeout. Please try with fewer files or increase Lambda timeout.")
+            
+            # Check for various error conditions
+            if 'errorMessage' in response_payload:
+                error_msg = response_payload.get('errorMessage', 'Unknown error')
+                logger.error(f"Lambda function error: {error_msg}")
+                raise Exception(f"Lambda function failed: {error_msg}")
+            
+            if response_payload.get('status') != 'success':
+                error_msg = response_payload.get('error', 'Unknown error')
+                logger.error(f"Lambda function returned error status: {error_msg}")
+                raise Exception(f"Failed to create ZIP archive: {error_msg}")
+            
+            # Extract results
+            presigned_url = response_payload.get('presigned_url')
+            if not presigned_url:
+                logger.error("Lambda response missing presigned_url")
+                raise Exception("Failed to generate download URL")
+            
+            # Calculate expiry time
+            expires_at = timezone.now() + timedelta(seconds=cls.URL_EXPIRY)
+            
+            logger.info(f"Successfully created ZIP archive with {response_payload.get('file_count', 0)} files, size: {response_payload.get('zip_size', 0)} bytes")
+            
+            return {
+                'download_url': presigned_url,
+                'file_count': response_payload.get('file_count', len(file_list)),
+                'zip_size': response_payload.get('zip_size', 0),
+                'expires_at': expires_at
+            }
+            
+        except Exception as e:
+            logger.error(f"Error in create_zip_archive_with_structure: {str(e)}")
             raise 

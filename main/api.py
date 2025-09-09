@@ -72,6 +72,7 @@ from .schemas import (
     AssetMoveSchema,
     AssetDeleteSchema,
     AssetDownloadSchema,
+    UnifiedDownloadSchema,
     AssetUpdateFieldsSchema,
     BulkDownloadResponseSchema,
     BoardReorderSchema,
@@ -2048,26 +2049,37 @@ def delete_assets(request, workspace_id: UUID, data: AssetDeleteSchema):
     
     return {"success": True, "deleted_count": count}
 
-@router.post("/workspaces/{uuid:workspace_id}/assets/download", response=BulkDownloadResponseSchema)
+@router.post("/workspaces/{uuid:workspace_id}/download", response=BulkDownloadResponseSchema)
 @decorate_view(check_workspace_permission(WorkspaceMember.Role.COMMENTER))
-def download_assets(request, workspace_id: UUID, data: AssetDownloadSchema):
-    """Download assets - works for single or multiple assets"""
+def download(request, workspace_id: UUID, data: UnifiedDownloadSchema):
+    """Download assets and/or boards with folder structure support"""
     workspace = get_object_or_404(Workspace, id=workspace_id)
     
-    # Get assets that belong to this workspace
-    assets = Asset.objects.filter(
-        workspace=workspace,
-        id__in=data.asset_ids
-    )
-    
-    if not assets.exists():
-        raise HttpError(404, "No valid assets found for the provided IDs")
-    
     try:
-        # Generate ZIP archive using AWS Lambda
-        zip_result = DownloadManager.create_zip_archive(
-            assets=list(assets),
-            zip_name=f"workspace-{workspace_id}-assets"
+        # Collect all assets with their folder structure
+        file_list = _build_download_file_list(
+            workspace=workspace,
+            asset_ids=data.asset_ids,
+            board_ids=data.board_ids,
+            include_subboards=data.include_subboards,
+            flatten_structure=data.flatten_structure
+        )
+        
+        if not file_list:
+            raise HttpError(404, "No valid assets found for the provided IDs")
+        
+        # Generate descriptive ZIP name
+        zip_name_parts = []
+        if data.asset_ids:
+            zip_name_parts.append(f"{len(data.asset_ids)}-assets")
+        if data.board_ids:
+            zip_name_parts.append(f"{len(data.board_ids)}-boards")
+        zip_name = f"workspace-{workspace_id}-{'-'.join(zip_name_parts)}"
+        
+        # Generate ZIP archive using AWS Lambda with folder structure
+        zip_result = DownloadManager.create_zip_archive_with_structure(
+            file_list=file_list,
+            zip_name=zip_name
         )
         
         return {
@@ -2077,8 +2089,84 @@ def download_assets(request, workspace_id: UUID, data: AssetDownloadSchema):
             "zip_size": zip_result["zip_size"]
         }
     except Exception as e:
-        logger.error(f"Error creating asset download: {str(e)}")
-        raise HttpError(500, "Failed to create asset download")
+        logger.error(f"Error creating unified download: {str(e)}")
+        raise HttpError(500, "Failed to create download")
+
+@router.post("/workspaces/{uuid:workspace_id}/assets/download", response=BulkDownloadResponseSchema)
+@decorate_view(check_workspace_permission(WorkspaceMember.Role.COMMENTER))
+def download_assets(request, workspace_id: UUID, data: AssetDownloadSchema):
+    """Download assets - works for single or multiple assets (legacy endpoint)"""
+    # Convert to unified schema for backward compatibility
+    unified_data = UnifiedDownloadSchema(
+        asset_ids=data.asset_ids,
+        board_ids=[],
+        include_subboards=False,
+        flatten_structure=True
+    )
+    return download(request, workspace_id, unified_data)
+
+def _build_download_file_list(workspace, asset_ids, board_ids, include_subboards, flatten_structure):
+    """Build file list with folder structure for download"""
+    file_list = []
+    processed_assets = set()  # Avoid duplicates
+    
+    # Process direct assets (no folder structure)
+    if asset_ids:
+        direct_assets = Asset.objects.filter(workspace=workspace, id__in=asset_ids)
+        for asset in direct_assets:
+            if asset.id not in processed_assets:
+                processed_assets.add(asset.id)
+                s3_key = asset.file.name
+                if not s3_key.startswith('media/'):
+                    s3_key = f'media/{s3_key}'
+                
+                file_list.append({
+                    "key": s3_key,
+                    "filename": asset.name or s3_key.split('/')[-1]
+                })
+    
+    # Process board assets (with folder structure)
+    if board_ids:
+        boards = Board.objects.filter(workspace=workspace, id__in=board_ids).select_related('parent')
+        
+        for board in boards:
+            if include_subboards:
+                boards_to_process = [board] + list(board.get_descendants().select_related('parent'))
+            else:
+                boards_to_process = [board]
+            
+            for b in boards_to_process:
+                # Build folder path from board hierarchy
+                if flatten_structure:
+                    folder_path = ""
+                else:
+                    # Get board hierarchy: "Parent Board/Child Board/Grandchild Board"
+                    ancestors = list(b.get_ancestors()) + [b]
+                    folder_path = "/".join([ancestor.name for ancestor in ancestors])
+                
+                # Get assets for this board
+                board_assets = b.assets.select_related().all()
+                for asset in board_assets:
+                    if asset.id not in processed_assets:
+                        processed_assets.add(asset.id)
+                        
+                        s3_key = asset.file.name
+                        if not s3_key.startswith('media/'):
+                            s3_key = f'media/{s3_key}'
+                        
+                        # Build ZIP filename with folder structure
+                        asset_name = asset.name or s3_key.split('/')[-1]
+                        if folder_path:
+                            zip_filename = f"{folder_path}/{asset_name}"
+                        else:
+                            zip_filename = asset_name
+                        
+                        file_list.append({
+                            "key": s3_key,
+                            "filename": zip_filename
+                        })
+    
+    return file_list
 
 @router.post("/workspaces/{uuid:workspace_id}/boards/{uuid:board_id}/assets")
 @decorate_view(check_workspace_permission(WorkspaceMember.Role.EDITOR))

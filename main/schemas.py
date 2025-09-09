@@ -283,6 +283,19 @@ class AssetDownloadSchema(AssetOperationSchema):
     """Download assets - works for single or multiple assets"""
     pass
 
+class UnifiedDownloadSchema(Schema):
+    """Download assets and/or boards - supports mixed downloads with folder structure"""
+    asset_ids: Optional[List[UUID]] = Field(default_factory=list, description="List of asset IDs to download")
+    board_ids: Optional[List[UUID]] = Field(default_factory=list, description="List of board IDs to download (includes all assets and sub-boards)")
+    include_subboards: bool = Field(default=True, description="Whether to include sub-boards when downloading boards")
+    flatten_structure: bool = Field(default=False, description="Whether to flatten the folder structure or maintain hierarchy")
+
+    def __init__(self, **data):
+        super().__init__(**data)
+        # Validate that at least one list is provided and not empty
+        if not self.asset_ids and not self.board_ids:
+            raise ValueError("At least one of asset_ids or board_ids must be provided")
+
 class AssetUpdateFieldsSchema(AssetOperationSchema):
     """Update asset properties like name and description - works for single or multiple assets"""
     name: Optional[str] = Field(None, description="Updated name for the assets")
