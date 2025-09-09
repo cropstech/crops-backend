@@ -169,12 +169,6 @@ def create_workspace(request, data: WorkspaceCreateSchema):
         
         # Create status options with their AI actions
         status_options = [
-            # {
-            #     "label": "In Progress",
-            #     "color": "#7B1FA2",
-            #     "order": 1,
-            #     "ai_actions": []
-            # },
             {
                 "label": "AI Review",
                 "color": "#E64A19",
@@ -193,12 +187,32 @@ def create_workspace(request, data: WorkspaceCreateSchema):
                         "configuration": {}
                     },
                     {
+                        "action": "color_blindness",
+                        "is_enabled": True,
+                        "configuration": {}
+                    },
+                    {
                         "action": "image_quality",
                         "is_enabled": True,
                         "configuration": {}
                     },
                     {
+                        "action": "font_size_detection",
+                        "is_enabled": True,
+                        "configuration": {}
+                    },
+                    {
                         "action": "text_overflow",
+                        "is_enabled": True,
+                        "configuration": {}
+                    },
+                    {
+                        "action": "placeholder_detection",
+                        "is_enabled": True,
+                        "configuration": {}
+                    },
+                    {
+                        "action": "repeated_text",
                         "is_enabled": True,
                         "configuration": {}
                     }
