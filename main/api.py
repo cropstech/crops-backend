@@ -65,6 +65,14 @@ from .schemas import (
     AssetBulkDeleteSchema,
     AssetBulkDownloadSchema,
     AssetUpdateSchema,
+    # New clean schemas
+    AssetTagsSchema,
+    AssetFavoritesSchema,
+    AssetBoardSchema,
+    AssetMoveSchema,
+    AssetDeleteSchema,
+    AssetDownloadSchema,
+    AssetUpdateFieldsSchema,
     BulkDownloadResponseSchema,
     BoardReorderSchema,
     AssetReorderRequestSchema,
@@ -1862,33 +1870,32 @@ def reorder_board_assets(request, workspace_id: UUID, board_id: UUID, data: Asse
     
     return {"success": True, "reordered_count": len(data.asset_ids)}
 
-@router.post("/workspaces/{uuid:workspace_id}/assets/{uuid:asset_id}/download", response=DownloadResponseSchema)
-@decorate_view(check_workspace_permission(WorkspaceMember.Role.COMMENTER))
-def initiate_download(request, workspace_id: UUID, asset_id: UUID, data: DownloadInitiateSchema):
-    """
-    Initiate a file download, supporting both single file and multipart downloads.
-    For large files (>5MB), multipart download is recommended for better reliability and performance.
-    """
-    asset = get_object_or_404(
-        Asset.objects.filter(workspace_id=workspace_id),
-        id=asset_id
-    )
-    
-    try:
-        download_info = DownloadManager.initiate_download(
-            asset=asset,
-            use_multipart=data.use_multipart,
-            part_size=data.part_size
-        )
-        return download_info
-    except Exception as e:
-        logger.error(f"Error initiating download for asset {asset_id}: {str(e)}")
-        raise HttpError(500, "Failed to initiate download")
 
-@router.post("/workspaces/{uuid:workspace_id}/assets/bulk/tags")
+
+@router.get("/workspaces/{uuid:workspace_id}/tags", response=List[TagSchema])
+@decorate_view(check_workspace_permission(WorkspaceMember.Role.COMMENTER))
+def list_workspace_tags(request, workspace_id: UUID):
+    """Get all tags in a workspace with asset counts"""
+    workspace = get_object_or_404(Workspace, id=workspace_id)
+    
+    tags = Tag.objects.filter(workspace=workspace, is_ai_generated=False).prefetch_related('assets').order_by('name')
+    return list(tags)
+
+
+
+
+
+
+
+# ========================================
+# NEW CLEAN ASSET OPERATION ENDPOINTS
+# These work for both single and multiple assets
+# ========================================
+
+@router.post("/workspaces/{uuid:workspace_id}/assets/tags")
 @decorate_view(check_workspace_permission(WorkspaceMember.Role.EDITOR))
-def bulk_update_tags(request, workspace_id: UUID, data: AssetBulkTagsSchema):
-    """Update tags for multiple assets using the Tag model"""
+def update_asset_tags(request, workspace_id: UUID, data: AssetTagsSchema):
+    """Update tags for assets - works for single or multiple assets"""
     workspace = get_object_or_404(Workspace, id=workspace_id)
     
     # Get assets that belong to this workspace
@@ -1896,6 +1903,9 @@ def bulk_update_tags(request, workspace_id: UUID, data: AssetBulkTagsSchema):
         workspace=workspace,
         id__in=data.asset_ids
     )
+    
+    if not assets.exists():
+        raise HttpError(404, "No valid assets found for the provided IDs")
     
     # Get or create Tag objects for the workspace
     tag_objects = []
@@ -1913,19 +1923,10 @@ def bulk_update_tags(request, workspace_id: UUID, data: AssetBulkTagsSchema):
     
     return {"success": True, "updated_count": assets.count()}
 
-@router.get("/workspaces/{uuid:workspace_id}/tags", response=List[TagSchema])
+@router.post("/workspaces/{uuid:workspace_id}/assets/favorites")
 @decorate_view(check_workspace_permission(WorkspaceMember.Role.COMMENTER))
-def list_workspace_tags(request, workspace_id: UUID):
-    """Get all tags in a workspace with asset counts"""
-    workspace = get_object_or_404(Workspace, id=workspace_id)
-    
-    tags = Tag.objects.filter(workspace=workspace, is_ai_generated=False).prefetch_related('assets').order_by('name')
-    return list(tags)
-
-@router.post("/workspaces/{uuid:workspace_id}/assets/bulk/favorite")
-@decorate_view(check_workspace_permission(WorkspaceMember.Role.COMMENTER))
-def bulk_toggle_favorite(request, workspace_id: UUID, data: AssetBulkFavoriteSchema):
-    """Toggle favorite status for multiple assets"""
+def update_asset_favorites(request, workspace_id: UUID, data: AssetFavoritesSchema):
+    """Toggle favorite status for assets - works for single or multiple assets"""
     workspace = get_object_or_404(Workspace, id=workspace_id)
     
     # Get assets that belong to this workspace
@@ -1934,19 +1935,19 @@ def bulk_toggle_favorite(request, workspace_id: UUID, data: AssetBulkFavoriteSch
         id__in=data.asset_ids
     )
     
+    if not assets.exists():
+        raise HttpError(404, "No valid assets found for the provided IDs")
+    
     # Update favorite status for each asset
-    for asset in assets:
-        asset.favorite = data.favorite
-        asset.save()
+    assets.update(favorite=data.favorite)
     
     return {"success": True, "updated_count": assets.count()}
 
-@router.post("/workspaces/{uuid:workspace_id}/boards/{uuid:board_id}/assets")
+@router.post("/workspaces/{uuid:workspace_id}/assets/fields")
 @decorate_view(check_workspace_permission(WorkspaceMember.Role.EDITOR))
-def bulk_add_to_board(request, workspace_id: UUID, board_id: UUID, data: AssetBulkBoardSchema):
-    """Add multiple assets to a board"""
+def update_asset_fields(request, workspace_id: UUID, data: AssetUpdateFieldsSchema):
+    """Update asset properties like name and description - works for single or multiple assets"""
     workspace = get_object_or_404(Workspace, id=workspace_id)
-    board = get_object_or_404(Board, workspace=workspace, id=board_id)
     
     # Get assets that belong to this workspace
     assets = Asset.objects.filter(
@@ -1954,32 +1955,25 @@ def bulk_add_to_board(request, workspace_id: UUID, board_id: UUID, data: AssetBu
         id__in=data.asset_ids
     )
     
-    # Add assets to board
-    count = 0
-    for asset in assets:
-        # Check if the relationship already exists to avoid duplicates
-        if not board.assets.filter(id=asset.id).exists():
-            board.assets.add(asset)
-            count += 1
+    if not assets.exists():
+        raise HttpError(404, "No valid assets found for the provided IDs")
     
-    # Smart Auto-Follow: Follow board when user adds assets to it
-    if count > 0:  # Only if we actually added assets
-        from main.services.notifications import NotificationService
-        if not NotificationService.is_following_board(request.user, board):
-            NotificationService.follow_board(
-                user=request.user,
-                board=board,
-                include_sub_boards=False,  # Conservative default
-                auto_followed=True  # Mark as auto-followed
-            )
-            logger.info(f"Auto-followed board '{board.name}' for user {request.user.email} after adding {count} assets")
+    # Update fields if provided
+    update_fields = {}
+    if data.name is not None:
+        update_fields['name'] = data.name
+    if data.description is not None:
+        update_fields['description'] = data.description
     
-    return {"success": True, "added_count": count}
+    if update_fields:
+        assets.update(**update_fields)
+    
+    return {"success": True, "updated_count": assets.count()}
 
-@router.post("/workspaces/{uuid:workspace_id}/assets/bulk/move")
+@router.post("/workspaces/{uuid:workspace_id}/assets/move")
 @decorate_view(check_workspace_permission(WorkspaceMember.Role.EDITOR))
-def bulk_move_assets(request, workspace_id: UUID, data: AssetBulkMoveSchema):
-    """Move multiple assets to a destination (workspace root or board)"""
+def move_assets(request, workspace_id: UUID, data: AssetMoveSchema):
+    """Move assets to a destination - works for single or multiple assets"""
     workspace = get_object_or_404(Workspace, id=workspace_id)
     
     # Get assets that belong to this workspace
@@ -1987,6 +1981,9 @@ def bulk_move_assets(request, workspace_id: UUID, data: AssetBulkMoveSchema):
         workspace=workspace,
         id__in=data.asset_ids
     )
+    
+    if not assets.exists():
+        raise HttpError(404, "No valid assets found for the provided IDs")
     
     if data.destination_type == 'board':
         # Move to a specific board
@@ -2016,32 +2013,10 @@ def bulk_move_assets(request, workspace_id: UUID, data: AssetBulkMoveSchema):
     
     return {"success": True, "moved_count": assets.count()}
 
-@router.delete("/workspaces/{uuid:workspace_id}/boards/{uuid:board_id}/assets")
-@decorate_view(check_workspace_permission(WorkspaceMember.Role.EDITOR))
-def bulk_remove_from_board(request, workspace_id: UUID, board_id: UUID, data: AssetBulkBoardSchema):
-    """Remove multiple assets from a board"""
-    workspace = get_object_or_404(Workspace, id=workspace_id)
-    board = get_object_or_404(Board, workspace=workspace, id=board_id)
-    
-    # Get assets that belong to this workspace
-    assets = Asset.objects.filter(
-        workspace=workspace,
-        id__in=data.asset_ids
-    )
-    
-    # Remove assets from board
-    count = 0
-    for asset in assets:
-        if board.assets.filter(id=asset.id).exists():
-            board.assets.remove(asset)
-            count += 1
-    
-    return {"success": True, "removed_count": count}
-
-@router.delete("/workspaces/{uuid:workspace_id}/assets/bulk")
+@router.delete("/workspaces/{uuid:workspace_id}/assets")
 @decorate_view(check_workspace_permission(WorkspaceMember.Role.ADMIN))
-def bulk_delete_assets(request, workspace_id: UUID, data: AssetBulkDeleteSchema):
-    """Delete multiple assets"""
+def delete_assets(request, workspace_id: UUID, data: AssetDeleteSchema):
+    """Delete assets - works for single or multiple assets"""
     workspace = get_object_or_404(Workspace, id=workspace_id)
     
     # Get assets that belong to this workspace
@@ -2049,6 +2024,9 @@ def bulk_delete_assets(request, workspace_id: UUID, data: AssetBulkDeleteSchema)
         workspace=workspace,
         id__in=data.asset_ids
     )
+    
+    if not assets.exists():
+        raise HttpError(404, "No valid assets found for the provided IDs")
     
     # Delete assets
     count = assets.count()
@@ -2056,10 +2034,10 @@ def bulk_delete_assets(request, workspace_id: UUID, data: AssetBulkDeleteSchema)
     
     return {"success": True, "deleted_count": count}
 
-@router.post("/workspaces/{uuid:workspace_id}/assets/bulk/download", response=BulkDownloadResponseSchema)
+@router.post("/workspaces/{uuid:workspace_id}/assets/download", response=BulkDownloadResponseSchema)
 @decorate_view(check_workspace_permission(WorkspaceMember.Role.COMMENTER))
-def bulk_download_assets(request, workspace_id: UUID, data: AssetBulkDownloadSchema):
-    """Create a server-side ZIP archive of multiple assets and provide a download link"""
+def download_assets(request, workspace_id: UUID, data: AssetDownloadSchema):
+    """Download assets - works for single or multiple assets"""
     workspace = get_object_or_404(Workspace, id=workspace_id)
     
     # Get assets that belong to this workspace
@@ -2068,8 +2046,8 @@ def bulk_download_assets(request, workspace_id: UUID, data: AssetBulkDownloadSch
         id__in=data.asset_ids
     )
     
-    if not assets:
-        raise HttpError(404, "No assets found for the provided IDs")
+    if not assets.exists():
+        raise HttpError(404, "No valid assets found for the provided IDs")
     
     try:
         # Generate ZIP archive using AWS Lambda
@@ -2085,8 +2063,71 @@ def bulk_download_assets(request, workspace_id: UUID, data: AssetBulkDownloadSch
             "zip_size": zip_result["zip_size"]
         }
     except Exception as e:
-        logger.error(f"Error creating bulk download: {str(e)}")
-        raise HttpError(500, "Failed to create bulk download")
+        logger.error(f"Error creating asset download: {str(e)}")
+        raise HttpError(500, "Failed to create asset download")
+
+@router.post("/workspaces/{uuid:workspace_id}/boards/{uuid:board_id}/assets")
+@decorate_view(check_workspace_permission(WorkspaceMember.Role.EDITOR))
+def add_assets_to_board(request, workspace_id: UUID, board_id: UUID, data: AssetBoardSchema):
+    """Add assets to a board - works for single or multiple assets"""
+    workspace = get_object_or_404(Workspace, id=workspace_id)
+    board = get_object_or_404(Board, workspace=workspace, id=board_id)
+    
+    # Get assets that belong to this workspace
+    assets = Asset.objects.filter(
+        workspace=workspace,
+        id__in=data.asset_ids
+    )
+    
+    if not assets.exists():
+        raise HttpError(404, "No valid assets found for the provided IDs")
+    
+    # Add assets to board
+    count = 0
+    for asset in assets:
+        # Check if the relationship already exists to avoid duplicates
+        if not board.assets.filter(id=asset.id).exists():
+            board.assets.add(asset)
+            count += 1
+    
+    # Smart Auto-Follow: Follow board when user adds assets to it
+    if count > 0:  # Only if we actually added assets
+        from main.services.notifications import NotificationService
+        if not NotificationService.is_following_board(request.user, board):
+            NotificationService.follow_board(
+                user=request.user,
+                board=board,
+                include_sub_boards=False,  # Conservative default
+                auto_followed=True  # Mark as auto-followed
+            )
+            logger.info(f"Auto-followed board '{board.name}' for user {request.user.email} after adding {count} assets")
+    
+    return {"success": True, "added_count": count}
+
+@router.delete("/workspaces/{uuid:workspace_id}/boards/{uuid:board_id}/assets")
+@decorate_view(check_workspace_permission(WorkspaceMember.Role.EDITOR))
+def remove_assets_from_board(request, workspace_id: UUID, board_id: UUID, data: AssetBoardSchema):
+    """Remove assets from a board - works for single or multiple assets"""
+    workspace = get_object_or_404(Workspace, id=workspace_id)
+    board = get_object_or_404(Board, workspace=workspace, id=board_id)
+    
+    # Get assets that belong to this workspace
+    assets = Asset.objects.filter(
+        workspace=workspace,
+        id__in=data.asset_ids
+    )
+    
+    if not assets.exists():
+        raise HttpError(404, "No valid assets found for the provided IDs")
+    
+    # Remove assets from board
+    count = 0
+    for asset in assets:
+        if board.assets.filter(id=asset.id).exists():
+            board.assets.remove(asset)
+            count += 1
+    
+    return {"success": True, "removed_count": count}
 
 @router.post("/workspaces/{uuid:workspace_id}/boards/reorder", response={200: dict})
 @decorate_view(check_workspace_permission(WorkspaceMember.Role.EDITOR))

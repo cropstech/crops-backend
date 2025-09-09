@@ -254,30 +254,61 @@ class DownloadResponseSchema(Schema):
     direct_url: Optional[str] = None  # For single file downloads
     expires_at: datetime
 
-class AssetBulkTagsSchema(Schema):
-    asset_ids: List[UUID]
-    tags: List[str]
+# Base schema for asset operations - always works with multiple assets
+class AssetOperationSchema(Schema):
+    asset_ids: List[UUID] = Field(..., description="List of asset IDs to operate on")
 
-class AssetBulkFavoriteSchema(Schema):
-    asset_ids: List[UUID]
-    favorite: bool
+class AssetTagsSchema(AssetOperationSchema):
+    """Update tags for assets - works for single or multiple assets"""
+    tags: List[str] = Field(..., description="List of tags to set on the assets")
 
-class AssetBulkBoardSchema(Schema):
-    asset_ids: List[UUID]
+class AssetFavoritesSchema(AssetOperationSchema):
+    """Toggle favorite status for assets - works for single or multiple assets"""
+    favorite: bool = Field(..., description="Favorite status to set")
 
-class AssetBulkMoveSchema(Schema):
-    asset_ids: List[UUID]
-    destination_type: str  # 'workspace' or 'board'
-    destination_id: UUID
+class AssetBoardSchema(AssetOperationSchema):
+    """Add/remove assets to/from board - works for single or multiple assets"""
+    pass
 
-class AssetBulkDeleteSchema(Schema):
-    asset_ids: List[UUID]
+class AssetMoveSchema(AssetOperationSchema):
+    """Move assets to a destination - works for single or multiple assets"""
+    destination_type: str = Field(..., description="Destination type: 'workspace' or 'board'")
+    destination_id: UUID = Field(..., description="Destination ID (board ID if moving to board)")
 
-class AssetBulkDownloadSchema(Schema):
-    asset_ids: List[UUID]
+class AssetDeleteSchema(AssetOperationSchema):
+    """Delete assets - works for single or multiple assets"""
+    pass
+
+class AssetDownloadSchema(AssetOperationSchema):
+    """Download assets - works for single or multiple assets"""
+    pass
+
+class AssetUpdateFieldsSchema(AssetOperationSchema):
+    """Update asset properties like name and description - works for single or multiple assets"""
+    name: Optional[str] = Field(None, description="Updated name for the assets")
+    description: Optional[str] = Field(None, description="Updated description for the assets")
+
+# Legacy schemas for backward compatibility (will be deprecated)
+class AssetBulkTagsSchema(AssetTagsSchema):
+    pass
+
+class AssetBulkFavoriteSchema(AssetFavoritesSchema):
+    pass
+
+class AssetBulkBoardSchema(AssetBoardSchema):
+    pass
+
+class AssetBulkMoveSchema(AssetMoveSchema):
+    pass
+
+class AssetBulkDeleteSchema(AssetDeleteSchema):
+    pass
+
+class AssetBulkDownloadSchema(AssetDownloadSchema):
+    pass
 
 class AssetUpdateSchema(Schema):
-    """Schema for updating individual asset properties"""
+    """Schema for updating individual asset properties (deprecated - use AssetUpdateFieldsSchema)"""
     name: Optional[str] = Field(None, description="Updated name for the asset")
     favorite: Optional[bool] = Field(None, description="Updated favorite status")
     description: Optional[str] = Field(None, description="Updated description")
