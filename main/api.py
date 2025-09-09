@@ -2108,14 +2108,17 @@ def download_assets(request, workspace_id: UUID, data: AssetDownloadSchema):
 def _build_download_file_list(workspace, asset_ids, board_ids, include_subboards, flatten_structure):
     """Build file list with folder structure for download"""
     file_list = []
-    processed_assets = set()  # Avoid duplicates
+    processed_combinations = set()  # Track (asset_id, folder_path) to avoid duplicates in same folder
     
     # Process direct assets (no folder structure)
     if asset_ids:
         direct_assets = Asset.objects.filter(workspace=workspace, id__in=asset_ids)
         for asset in direct_assets:
-            if asset.id not in processed_assets:
-                processed_assets.add(asset.id)
+            folder_path = ""  # Direct assets have no folder
+            combination_key = (asset.id, folder_path)
+            
+            if combination_key not in processed_combinations:
+                processed_combinations.add(combination_key)
                 s3_key = asset.file.name
                 if not s3_key.startswith('media/'):
                     s3_key = f'media/{s3_key}'
@@ -2147,8 +2150,10 @@ def _build_download_file_list(workspace, asset_ids, board_ids, include_subboards
                 # Get assets for this board
                 board_assets = b.assets.select_related().all()
                 for asset in board_assets:
-                    if asset.id not in processed_assets:
-                        processed_assets.add(asset.id)
+                    combination_key = (asset.id, folder_path)
+                    
+                    if combination_key not in processed_combinations:
+                        processed_combinations.add(combination_key)
                         
                         s3_key = asset.file.name
                         if not s3_key.startswith('media/'):
