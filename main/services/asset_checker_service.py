@@ -332,61 +332,12 @@ class AssetCheckerService:
                 if check_type == 'grammar' and issue_type == 'grammar_error':
                     message = self._format_grammar_comment_message(issue)
                 
-                # Prepare annotation data from location if available
+                # Prepare annotation data from location (all issues now have standardized location format)
                 annotation_type = 'NONE'
                 x = y = width = height = None
                 
-                # Handle placeholder detection special case
-                if issue_type == 'placeholder_text_detected' and issue.get('details', {}).get('placeholder_blocks'):
-                    placeholder_blocks = issue.get('details', {}).get('placeholder_blocks', [])
-                    if placeholder_blocks and len(placeholder_blocks) > 0:
-                        # Use the first placeholder block's position for annotation
-                        first_block = placeholder_blocks[0]
-                        position = first_block.get('position', {})
-                        
-                        if position and asset.width and asset.height:
-                            left = position.get('left')
-                            top = position.get('top')
-                            loc_width = position.get('width')
-                            loc_height = position.get('height')
-                            
-                            # Only set annotation if we have valid coordinates and image dimensions
-                            if all(v is not None for v in [left, top, loc_width, loc_height]):
-                                annotation_type = 'AREA'
-                                # Convert from pixel coordinates to percentages based on image dimensions
-                                x = (float(left) / asset.width) * 100
-                                y = (float(top) / asset.height) * 100
-                                width = (float(loc_width) / asset.width) * 100
-                                height = (float(loc_height) / asset.height) * 100
-                                logger.info(f"Setting placeholder annotation for {issue_type}: ({x:.1f}%, {y:.1f}%, {width:.1f}%, {height:.1f}%) - converted from pixels ({left}, {top}, {loc_width}, {loc_height}) on {asset.width}x{asset.height} image")
-                            elif all(v is not None for v in [left, top]):
-                                # If we only have position, create a point annotation
-                                annotation_type = 'POINT'
-                                x = (float(left) / asset.width) * 100
-                                y = (float(top) / asset.height) * 100
-                                logger.info(f"Setting placeholder point annotation for {issue_type}: ({x:.1f}%, {y:.1f}%) - converted from pixels ({left}, {top}) on {asset.width}x{asset.height} image")
-                
-                # Handle text close to edge special case
-                elif issue_type == 'text_close_to_edge' and issue.get('details', {}).get('affected_lines'):
-                    affected_lines = issue.get('details', {}).get('affected_lines', [])
-                    if affected_lines and len(affected_lines) > 0 and asset.width and asset.height:
-                        # Use the first affected line's position for annotation
-                        first_line = affected_lines[0]
-                        position = first_line.get('position', {})
-                        
-                        if position:
-                            left = position.get('left')
-                            top = position.get('top')
-                            
-                            # Create a point annotation for the first affected line
-                            if all(v is not None for v in [left, top]):
-                                annotation_type = 'POINT'
-                                x = (float(left) / asset.width) * 100
-                                y = (float(top) / asset.height) * 100
-                                logger.info(f"Setting text close to edge annotation for {issue_type}: ({x:.1f}%, {y:.1f}%) - converted from pixels ({left}, {top}) on {asset.width}x{asset.height} image, representing {len(affected_lines)} affected line(s)")
-                
-                # Handle standard location field for other issue types
-                elif location and isinstance(location, dict):
+                # Handle standard location field that all issues now have
+                if location and isinstance(location, dict):
                     # Map location fields to comment annotation fields
                     left = location.get('left')
                     top = location.get('top')
@@ -401,27 +352,14 @@ class AssetCheckerService:
                         y = float(top) * 100
                         width = float(loc_width) * 100
                         height = float(loc_height) * 100
-                        logger.info(f"Setting location annotation for {issue_type}: ({x}%, {y}%, {width}%, {height}%)")
+                        logger.info(f"Setting area annotation for {issue_type}: ({x:.2f}%, {y:.2f}%, {width:.2f}%, {height:.2f}%)")
                     elif all(v is not None for v in [left, top]):
                         # If we only have position, create a point annotation
                         annotation_type = 'POINT'
                         # Convert from fractional (0.05) to percentage (5.0)
                         x = float(left) * 100
                         y = float(top) * 100
-                        logger.info(f"Setting point annotation for {issue_type}: ({x}%, {y}%)")
-                
-                # Handle grammar text annotation using offset and length
-                elif check_type == 'grammar' and location and isinstance(location, dict):
-                    offset = location.get('offset')
-                    length = location.get('length')
-                    
-                    # For text-based annotations, we use offset and length as text selection
-                    if offset is not None and length is not None:
-                        annotation_type = 'TEXT'
-                        # Store offset and length in x and y fields for text annotation
-                        x = float(offset)
-                        y = float(length)
-                        logger.info(f"Setting text annotation for grammar issue: offset={offset}, length={length}")
+                        logger.info(f"Setting point annotation for {issue_type}: ({x:.2f}%, {y:.2f}%)")
                 
                 # Create comment with board context and location annotation if available
                 comment = Comment.objects.create(
