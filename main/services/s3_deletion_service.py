@@ -136,11 +136,12 @@ class S3AssetDeletionService:
 # Chancy job definitions
 # Import chancy directly to avoid circular imports
 from django.conf import settings
-from chancy import Chancy
+from chancy import Chancy, job
 
 # Create chancy app instance directly
 chancy_app = Chancy(settings.DATABASES["default"])
 
+@job()
 def delete_asset_s3_files_job(asset_id: str) -> Dict[str, Any]:
     """
     Chancy job to delete all S3 files for an asset.
@@ -215,6 +216,7 @@ def delete_asset_s3_files_job(asset_id: str) -> Dict[str, Any]:
         }
 
 
+@job()
 def delete_asset_s3_files_immediate(asset_id: str) -> Dict[str, Any]:
     """
     Chancy job for immediate S3 deletion (no recovery period).
@@ -222,31 +224,35 @@ def delete_asset_s3_files_immediate(asset_id: str) -> Dict[str, Any]:
     return delete_asset_s3_files_job(asset_id)
 
 
-def schedule_asset_s3_deletion(asset: Asset, immediate: bool = False) -> None:
+def schedule_asset_s3_deletion(asset: Asset, immediate: bool = False) -> 'datetime':
     """
     Schedule S3 deletion for an asset.
     
     Args:
         asset: The asset to schedule deletion for
         immediate: If True, delete immediately. If False, respect recovery period.
+        
+    Returns:
+        datetime: When the S3 deletion will actually execute
     """
+    from datetime import datetime, timezone
+    
     if immediate:
         # Delete immediately
-        chancy_app.sync_push(delete_asset_s3_files_immediate, str(asset.id))
+        chancy_app.sync_push(delete_asset_s3_files_immediate.job.with_kwargs(asset_id=str(asset.id)))
         logger.info(f"Scheduled immediate S3 deletion for asset {asset.id}")
+        return datetime.now(timezone.utc)
     else:
         # Schedule for after recovery period
         recovery_days = S3AssetDeletionService.get_recovery_period_days(asset.workspace)
         delay = timedelta(days=recovery_days)
         
-        # Use sync_push with delay for scheduled jobs
-        from datetime import datetime
-        scheduled_at = datetime.utcnow() + delay
+        # Use the correct Chancy API for scheduled jobs
+        scheduled_at = datetime.now(timezone.utc) + delay
         
-        chancy_app.sync_push(
-            delete_asset_s3_files_job,
-            str(asset.id),
-            scheduled_at=scheduled_at
-        )
+        # Create a scheduled job using the correct Chancy API
+        scheduled_job = delete_asset_s3_files_job.job.with_scheduled_at(scheduled_at).with_kwargs(asset_id=str(asset.id))
+        chancy_app.sync_push(scheduled_job)
         
         logger.info(f"Scheduled S3 deletion for asset {asset.id} in {recovery_days} days")
+        return scheduled_at

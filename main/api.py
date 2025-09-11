@@ -1320,7 +1320,7 @@ def upload_folder(
 @decorate_view(check_workspace_permission(WorkspaceMember.Role.COMMENTER))
 def get_asset(request, workspace_id: UUID, asset_id: UUID):
     asset = get_object_or_404(
-        Asset.objects.filter(workspace_id=workspace_id),
+        Asset.objects.filter(workspace_id=workspace_id, deleted_at__isnull=True),
         id=asset_id
     )
     return asset
@@ -1330,7 +1330,7 @@ def get_asset(request, workspace_id: UUID, asset_id: UUID):
 def update_asset(request, workspace_id: UUID, asset_id: UUID, data: AssetUpdateSchema):
     """Update an asset's properties like name and favorite status"""
     asset = get_object_or_404(
-        Asset.objects.filter(workspace_id=workspace_id),
+        Asset.objects.filter(workspace_id=workspace_id, deleted_at__isnull=True),
         id=asset_id
     )
     
@@ -1366,8 +1366,11 @@ def list_assets(
     # Calculate offset
     offset = (filters.page - 1) * filters.page_size
     
-    # Base query with prefetched boards and tags
-    query = Asset.objects.filter(workspace_id=workspace_id).prefetch_related('boards', 'tags')
+    # Base query with prefetched boards and tags, excluding soft-deleted assets
+    query = Asset.objects.filter(
+        workspace_id=workspace_id,
+        deleted_at__isnull=True  # Exclude soft-deleted assets
+    ).prefetch_related('boards', 'tags')
     
     # Filter by board if specified
     board = None
@@ -1913,10 +1916,11 @@ def update_asset_tags(request, workspace_id: UUID, data: AssetTagsSchema):
     """Update tags for assets - works for single or multiple assets"""
     workspace = get_object_or_404(Workspace, id=workspace_id)
     
-    # Get assets that belong to this workspace
+    # Get assets that belong to this workspace and are not soft-deleted
     assets = Asset.objects.filter(
         workspace=workspace,
-        id__in=data.asset_ids
+        id__in=data.asset_ids,
+        deleted_at__isnull=True
     )
     
     if not assets.exists():
@@ -1944,10 +1948,11 @@ def update_asset_favorites(request, workspace_id: UUID, data: AssetFavoritesSche
     """Toggle favorite status for assets - works for single or multiple assets"""
     workspace = get_object_or_404(Workspace, id=workspace_id)
     
-    # Get assets that belong to this workspace
+    # Get assets that belong to this workspace and are not soft-deleted
     assets = Asset.objects.filter(
         workspace=workspace,
-        id__in=data.asset_ids
+        id__in=data.asset_ids,
+        deleted_at__isnull=True
     )
     
     if not assets.exists():
@@ -1964,10 +1969,11 @@ def update_asset_fields(request, workspace_id: UUID, data: AssetUpdateFieldsSche
     """Update asset properties like name and description - works for single or multiple assets"""
     workspace = get_object_or_404(Workspace, id=workspace_id)
     
-    # Get assets that belong to this workspace
+    # Get assets that belong to this workspace and are not soft-deleted
     assets = Asset.objects.filter(
         workspace=workspace,
-        id__in=data.asset_ids
+        id__in=data.asset_ids,
+        deleted_at__isnull=True
     )
     
     if not assets.exists():
@@ -1991,10 +1997,11 @@ def move_assets(request, workspace_id: UUID, data: AssetMoveSchema):
     """Move assets to a destination - works for single or multiple assets"""
     workspace = get_object_or_404(Workspace, id=workspace_id)
     
-    # Get assets that belong to this workspace
+    # Get assets that belong to this workspace and are not soft-deleted
     assets = Asset.objects.filter(
         workspace=workspace,
-        id__in=data.asset_ids
+        id__in=data.asset_ids,
+        deleted_at__isnull=True
     )
     
     if not assets.exists():
@@ -2029,7 +2036,7 @@ def move_assets(request, workspace_id: UUID, data: AssetMoveSchema):
     return {"success": True, "moved_count": assets.count()}
 
 @router.delete("/workspaces/{uuid:workspace_id}/assets")
-@decorate_view(check_workspace_permission(WorkspaceMember.Role.ADMIN))
+@decorate_view(check_workspace_permission(WorkspaceMember.Role.EDITOR))
 def delete_assets(request, workspace_id: UUID, data: AssetDeleteSchema):
     """Soft delete assets with S3 cleanup scheduling"""
     from main.services.s3_deletion_service import schedule_asset_s3_deletion
@@ -2055,8 +2062,12 @@ def delete_assets(request, workspace_id: UUID, data: AssetDeleteSchema):
         asset.soft_delete(user=request.user)
         
         # Schedule S3 deletion based on workspace plan
-        schedule_asset_s3_deletion(asset, immediate=False)
-        asset.s3_deletion_scheduled_at = timezone.now()
+        from main.services.s3_deletion_service import S3AssetDeletionService
+        recovery_days = S3AssetDeletionService.get_recovery_period_days(asset.workspace)
+        scheduled_execution_time = schedule_asset_s3_deletion(asset, immediate=False)
+        
+        # Store when the S3 deletion will actually happen, not when it was scheduled
+        asset.s3_deletion_scheduled_at = scheduled_execution_time
         asset.save()
         
         count += 1
@@ -2214,7 +2225,7 @@ def _build_download_file_list(workspace, asset_ids, board_ids, include_subboards
     
     # Process direct assets (no folder structure)
     if asset_ids:
-        direct_assets = Asset.objects.filter(workspace=workspace, id__in=asset_ids)
+        direct_assets = Asset.objects.filter(workspace=workspace, id__in=asset_ids, deleted_at__isnull=True)
         for asset in direct_assets:
             folder_path = ""  # Direct assets have no folder
             combination_key = (asset.id, folder_path)
@@ -2282,10 +2293,11 @@ def add_assets_to_board(request, workspace_id: UUID, board_id: UUID, data: Asset
     workspace = get_object_or_404(Workspace, id=workspace_id)
     board = get_object_or_404(Board, workspace=workspace, id=board_id)
     
-    # Get assets that belong to this workspace
+    # Get assets that belong to this workspace and are not soft-deleted
     assets = Asset.objects.filter(
         workspace=workspace,
-        id__in=data.asset_ids
+        id__in=data.asset_ids,
+        deleted_at__isnull=True
     )
     
     if not assets.exists():
@@ -2320,10 +2332,11 @@ def remove_assets_from_board(request, workspace_id: UUID, board_id: UUID, data: 
     workspace = get_object_or_404(Workspace, id=workspace_id)
     board = get_object_or_404(Board, workspace=workspace, id=board_id)
     
-    # Get assets that belong to this workspace
+    # Get assets that belong to this workspace and are not soft-deleted
     assets = Asset.objects.filter(
         workspace=workspace,
-        id__in=data.asset_ids
+        id__in=data.asset_ids,
+        deleted_at__isnull=True
     )
     
     if not assets.exists():
@@ -2604,10 +2617,11 @@ def set_field_values(
     workspace = get_object_or_404(Workspace, id=workspace_id)
     field = get_object_or_404(CustomField, workspace=workspace, id=field_id)
     
-    # Get assets that belong to this workspace
+    # Get assets that belong to this workspace and are not soft-deleted
     assets = Asset.objects.filter(
         workspace=workspace,
-        id__in=data.asset_ids
+        id__in=data.asset_ids,
+        deleted_at__isnull=True
     )
     
     if not assets.exists():
