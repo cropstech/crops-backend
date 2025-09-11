@@ -2163,9 +2163,12 @@ def recover_assets(request, workspace_id: UUID, data: AssetDeleteSchema):
         # Cancel any scheduled S3 deletion jobs
         try:
             pending_jobs = Job.objects.filter(
-                function_name__in=['delete_asset_s3_files_job', 'delete_asset_s3_files_immediate'],
-                args__contains=[str(asset.id)],
-                status='queued'
+                func__in=[
+                    'main.services.s3_deletion_service.delete_asset_s3_files_job',
+                    'main.services.s3_deletion_service.delete_asset_s3_files_immediate'
+                ],
+                kwargs__asset_id=str(asset.id),
+                state='pending'
             )
             cancelled_jobs += pending_jobs.count()
             pending_jobs.delete()  # Cancel the jobs
