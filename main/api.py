@@ -2118,7 +2118,7 @@ def list_deleted_assets(request, workspace_id: UUID, page: int = 1, per_page: in
             'file_type': asset.file_type,
             'size': asset.size,
             'deleted_at': asset.deleted_at.isoformat(),
-            'deleted_by': asset.deleted_by.email if asset.deleted_by else None,
+            'deleted_by': f"{asset.deleted_by.first_name} {asset.deleted_by.last_name}".strip() if asset.deleted_by else None,
             'deletion_scheduled_for': deletion_date.isoformat(),
             'can_be_recovered': asset.can_be_recovered,
             'directory': dirname(asset.file.name) if asset.file else None 
