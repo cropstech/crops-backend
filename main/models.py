@@ -48,7 +48,8 @@ class Workspace(models.Model):
         related_name='workspaces',
         blank=True
     )
-
+    admin_notes = models.TextField(null=True, blank=True)
+    
     def __str__(self):
         return self.name
     
@@ -462,8 +463,62 @@ class Asset(models.Model):
     )
     processing_error = models.TextField(null=True, blank=True)
 
+    # Soft delete fields for recovery period functionality
+    deleted_at = models.DateTimeField(null=True, blank=True, help_text="When the asset was soft deleted")
+    deleted_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, 
+        on_delete=models.SET_NULL, 
+        null=True, 
+        blank=True,
+        related_name='deleted_assets',
+        help_text="User who deleted this asset"
+    )
+    s3_files_deleted = models.BooleanField(
+        default=False, 
+        help_text="Whether S3 files have been permanently deleted"
+    )
+    s3_deletion_scheduled_at = models.DateTimeField(
+        null=True, 
+        blank=True,
+        help_text="When S3 deletion was scheduled"
+    )
+
+    class Meta:
+        indexes = [
+            models.Index(fields=['workspace', 'deleted_at']),
+            models.Index(fields=['deleted_at']),
+            models.Index(fields=['s3_deletion_scheduled_at']),
+            models.Index(fields=['workspace', 'file_type']),
+            models.Index(fields=['date_uploaded']),
+        ]
+
     def __str__(self):
         return self.name
+    
+    @property
+    def is_deleted(self):
+        """Check if this asset is soft deleted"""
+        return self.deleted_at is not None
+    
+    @property
+    def can_be_recovered(self):
+        """Check if this asset can still be recovered (S3 files not deleted yet)"""
+        return self.is_deleted and not self.s3_files_deleted
+    
+    def soft_delete(self, user=None):
+        """Mark asset as deleted without removing S3 files immediately"""
+        from django.utils import timezone
+        self.deleted_at = timezone.now()
+        if user:
+            self.deleted_by = user
+        self.save()
+    
+    def recover(self):
+        """Recover a soft-deleted asset"""
+        self.deleted_at = None
+        self.deleted_by = None
+        self.s3_deletion_scheduled_at = None
+        self.save()
 
     def save(self, *args, **kwargs):
         logger.debug(f"Saving asset: {self.id}, filename: {self.file.name if self.file else 'None'}")

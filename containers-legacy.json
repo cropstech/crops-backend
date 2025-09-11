@@ -2,18 +2,29 @@
   "serviceName": "crops-backend",
   "containers": {
     "web": {
-      "image": ":crops-backend.web.latest",
+    "image": ":crops-backend.web.latest",
       "ports": {
         "8000": "HTTP"
       },
       "command": [
-        "sh",
-        "-c",
-        "python manage.py migrate --noinput && exec gunicorn --bind 0.0.0.0:8000 --workers 1 --timeout 120 --max-requests 0 --log-level debug --access-logfile - --error-logfile - --preload crops.wsgi:application"
-      ],
-      "environment": {
-        "DJANGO_SETTINGS_MODULE": "crops.settings_production"
-      }
+        "gunicorn",
+        "--bind",
+        "0.0.0.0:8000",
+        "--workers",
+        "1",
+        "--timeout",
+        "120",
+        "--max-requests",
+        "0",
+        "--log-level",
+        "debug",
+        "--access-logfile",
+        "-",
+        "--error-logfile",
+        "-",
+        "--preload",
+        "crops.wsgi:application"
+      ]
     }
   },
   "publicEndpoint": {
