@@ -2086,10 +2086,15 @@ def delete_assets(request, workspace_id: UUID, data: AssetDeleteSchema):
 
 @router.get("/workspaces/{uuid:workspace_id}/assets/deleted")
 @decorate_view(check_workspace_permission(WorkspaceMember.Role.COMMENTER))
-def list_deleted_assets(request, workspace_id: UUID):
+def list_deleted_assets(request, workspace_id: UUID, page: int = 1, per_page: int = 20):
     """List soft-deleted assets that can still be recovered"""
     from main.services.s3_deletion_service import S3AssetDeletionService
+    from django.core.paginator import Paginator
+    
     workspace = get_object_or_404(Workspace, id=workspace_id)
+    
+    # Limit per_page to prevent abuse
+    per_page = min(per_page, 100)
     
     deleted_assets = Asset.objects.filter(
         workspace=workspace,
@@ -2097,9 +2102,14 @@ def list_deleted_assets(request, workspace_id: UUID):
         s3_files_deleted=False  # Only recoverable assets
     ).order_by('-deleted_at')
     
+    # Apply pagination
+    paginator = Paginator(deleted_assets, per_page)
+    page_obj = paginator.get_page(page)
+    
     assets_data = []
-    for asset in deleted_assets:
-        recovery_days = S3AssetDeletionService.get_recovery_period_days(workspace)
+    recovery_days = S3AssetDeletionService.get_recovery_period_days(workspace)
+    
+    for asset in page_obj:
         deletion_date = asset.deleted_at + timedelta(days=recovery_days)
         
         assets_data.append({
@@ -2116,7 +2126,15 @@ def list_deleted_assets(request, workspace_id: UUID):
     
     return {
         "deleted_assets": assets_data,
-        "recovery_period_days": S3AssetDeletionService.get_recovery_period_days(workspace)
+        "recovery_period_days": recovery_days,
+        "pagination": {
+            "page": page,
+            "per_page": per_page,
+            "total_pages": paginator.num_pages,
+            "total_count": paginator.count,
+            "has_next": page_obj.has_next(),
+            "has_previous": page_obj.has_previous()
+        }
     }
 
 @router.post("/workspaces/{uuid:workspace_id}/assets/recover")
