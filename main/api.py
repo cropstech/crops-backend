@@ -116,6 +116,7 @@ from django_paddle_billing.models import Product, Subscription, Price, paddle_cl
 from paddle_billing_client.models.subscription import SubscriptionRequest
 from .download import DownloadManager
 import os
+from os.path import dirname
 import zipfile
 import tempfile
 from .upload import UploadManager
@@ -2110,6 +2111,7 @@ def list_deleted_assets(request, workspace_id: UUID):
             'deleted_by': asset.deleted_by.email if asset.deleted_by else None,
             'deletion_scheduled_for': deletion_date.isoformat(),
             'can_be_recovered': asset.can_be_recovered,
+            'directory': dirname(asset.file.name) if asset.file else None 
         })
     
     return {
