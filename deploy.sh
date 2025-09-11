@@ -129,9 +129,9 @@ PY
 
     TMP_JSON=$(mktemp)
     jq --argjson env "$ENV_JSON" \
-       '.containers.web.environment = ((.containers.web.environment // {}) + $env)' \
+       '.containers.web.environment = ((.containers.web.environment // {}) + $env) | .containers.worker.environment = ((.containers.worker.environment // {}) + $env)' \
        containers-deploy.json > "$TMP_JSON" && mv "$TMP_JSON" containers-deploy.json
-    echo -e "${GREEN}✅ Applied environment variables to web container${NC}"
+    echo -e "${GREEN}✅ Applied environment variables to web and worker containers${NC}"
 else
     echo -e "${YELLOW}⚠️  .env.production not found; using default environment${NC}"
 fi
