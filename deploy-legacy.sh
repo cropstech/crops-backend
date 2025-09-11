@@ -74,7 +74,7 @@ echo -e "${YELLOW}🚀 Deploying containers...${NC}"
 cp containers.json containers.json.bak
 sed -i '' "s|:crops-backend\.web\.latest|${LATEST_WEB}|g" containers.json
 echo -e "${YELLOW}🔧 Updated containers.json image to: ${LATEST_WEB}${NC}"
-# No celery references to update
+# Background jobs handled by Chancy worker container
 
 # Sync .env.production into containers.json environment (if present)
 if [ -f ".env.production" ]; then

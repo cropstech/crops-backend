@@ -43,7 +43,7 @@ This starts:
 - PostgreSQL on 5432
 - Redis on 6379
 - Django on http://localhost:8000
-- Celery worker and Celery beat
+- Chancy worker for background jobs
 
 ### 3) Apply migrations and create a superuser
 ```bash
@@ -57,7 +57,7 @@ Open http://localhost:8000
 - View logs:
   ```bash
   docker compose logs -f web
-  docker compose logs -f celery
+  docker compose logs -f worker
   docker compose logs -f redis
   ```
 - Stop services:

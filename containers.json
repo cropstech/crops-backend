@@ -9,7 +9,18 @@
       "command": [
         "sh",
         "-c",
-        "python manage.py migrate --noinput && exec gunicorn --bind 0.0.0.0:8000 --workers 1 --timeout 120 --max-requests 0 --log-level debug --access-logfile - --error-logfile - --preload crops.wsgi:application"
+        "python manage.py migrate --noinput && PYTHONPATH=/app chancy --app crops.chancy_worker.chancy_app misc migrate && exec gunicorn --bind 0.0.0.0:8000 --workers 1 --timeout 120 --max-requests 0 --log-level debug --access-logfile - --error-logfile - --preload crops.wsgi:application"
+      ],
+      "environment": {
+        "DJANGO_SETTINGS_MODULE": "crops.settings_production"
+      }
+    },
+    "worker": {
+      "image": ":crops-backend.web.latest",
+      "command": [
+        "sh",
+        "-c",
+        "PYTHONPATH=/app chancy --app crops.chancy_worker.chancy_app worker start"
       ],
       "environment": {
         "DJANGO_SETTINGS_MODULE": "crops.settings_production"

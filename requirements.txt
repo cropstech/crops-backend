@@ -46,6 +46,6 @@ sendypy==5.2.5
 
 # Notification system dependencies
 django-notifications-hq @ git+https://github.com/openwisp/django-notifications.git@f4918c2409a734ec1aa9798d86c3a729b505f753
-celery>=5.3.0
-redis>=4.5.0
-django-celery-beat>=2.5.0
+
+# Background job processing
+chancy[cli,django]>=0.22.0

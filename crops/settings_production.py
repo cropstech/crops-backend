@@ -59,9 +59,6 @@ USE_X_FORWARDED_HOST = True
 USE_X_FORWARDED_PROTO = True
 SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 
-# Celery settings for production
-CELERY_BROKER_URL = env('CELERY_BROKER_URL')
-CELERY_RESULT_BACKEND = env('CELERY_RESULT_BACKEND')
 
 # Cache configuration using Redis
 CACHES = {
@@ -105,11 +102,6 @@ LOGGING = {
             'propagate': False,
         },
         'crops': {
-            'handlers': ['console'],
-            'level': 'INFO',
-            'propagate': False,
-        },
-        'celery': {
             'handlers': ['console'],
             'level': 'INFO',
             'propagate': False,

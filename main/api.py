@@ -2031,23 +2031,125 @@ def move_assets(request, workspace_id: UUID, data: AssetMoveSchema):
 @router.delete("/workspaces/{uuid:workspace_id}/assets")
 @decorate_view(check_workspace_permission(WorkspaceMember.Role.ADMIN))
 def delete_assets(request, workspace_id: UUID, data: AssetDeleteSchema):
-    """Delete assets - works for single or multiple assets"""
+    """Soft delete assets with S3 cleanup scheduling"""
+    from main.services.s3_deletion_service import schedule_asset_s3_deletion
+    from django.utils import timezone
+    
     workspace = get_object_or_404(Workspace, id=workspace_id)
     
-    # Get assets that belong to this workspace
+    # Get assets that belong to this workspace and are not already deleted
     assets = Asset.objects.filter(
         workspace=workspace,
-        id__in=data.asset_ids
+        id__in=data.asset_ids,
+        deleted_at__isnull=True  # Only non-deleted assets
     )
     
     if not assets.exists():
         raise HttpError(404, "No valid assets found for the provided IDs")
     
-    # Delete assets
-    count = assets.count()
-    assets.delete()
+    count = 0
+    scheduled_for_deletion = []
     
-    return {"success": True, "deleted_count": count}
+    # Soft delete each asset and schedule S3 cleanup
+    for asset in assets:
+        asset.soft_delete(user=request.user)
+        
+        # Schedule S3 deletion based on workspace plan
+        schedule_asset_s3_deletion(asset, immediate=False)
+        asset.s3_deletion_scheduled_at = timezone.now()
+        asset.save()
+        
+        count += 1
+        scheduled_for_deletion.append({
+            'id': str(asset.id),
+            'name': asset.name,
+            'recovery_days': asset.workspace.subscription_details.get('recovery_days', 7)
+        })
+    
+    return {
+        "success": True, 
+        "deleted_count": count,
+        "scheduled_for_deletion": scheduled_for_deletion
+    }
+
+@router.get("/workspaces/{uuid:workspace_id}/assets/deleted")
+@decorate_view(check_workspace_permission(WorkspaceMember.Role.COMMENTER))
+def list_deleted_assets(request, workspace_id: UUID):
+    """List soft-deleted assets that can still be recovered"""
+    from main.services.s3_deletion_service import S3AssetDeletionService
+    workspace = get_object_or_404(Workspace, id=workspace_id)
+    
+    deleted_assets = Asset.objects.filter(
+        workspace=workspace,
+        deleted_at__isnull=False,
+        s3_files_deleted=False  # Only recoverable assets
+    ).order_by('-deleted_at')
+    
+    assets_data = []
+    for asset in deleted_assets:
+        recovery_days = S3AssetDeletionService.get_recovery_period_days(workspace)
+        deletion_date = asset.deleted_at + timedelta(days=recovery_days)
+        
+        assets_data.append({
+            'id': str(asset.id),
+            'name': asset.name,
+            'file_type': asset.file_type,
+            'size': asset.size,
+            'deleted_at': asset.deleted_at.isoformat(),
+            'deleted_by': asset.deleted_by.email if asset.deleted_by else None,
+            'deletion_scheduled_for': deletion_date.isoformat(),
+            'can_be_recovered': asset.can_be_recovered,
+        })
+    
+    return {
+        "deleted_assets": assets_data,
+        "recovery_period_days": S3AssetDeletionService.get_recovery_period_days(workspace)
+    }
+
+@router.post("/workspaces/{uuid:workspace_id}/assets/recover")
+@decorate_view(check_workspace_permission(WorkspaceMember.Role.ADMIN))
+def recover_assets(request, workspace_id: UUID, data: AssetDeleteSchema):
+    """Recover soft-deleted assets"""
+    from chancy.contrib.django.models import Job
+    
+    workspace = get_object_or_404(Workspace, id=workspace_id)
+    
+    # Get deleted assets that can still be recovered
+    assets = Asset.objects.filter(
+        workspace=workspace,
+        id__in=data.asset_ids,
+        deleted_at__isnull=False,
+        s3_files_deleted=False
+    )
+    
+    if not assets.exists():
+        raise HttpError(404, "No recoverable assets found for the provided IDs")
+    
+    recovered_count = 0
+    cancelled_jobs = 0
+    
+    for asset in assets:
+        # Cancel any scheduled S3 deletion jobs
+        try:
+            pending_jobs = Job.objects.filter(
+                function_name__in=['delete_asset_s3_files_job', 'delete_asset_s3_files_immediate'],
+                args__contains=[str(asset.id)],
+                status='queued'
+            )
+            cancelled_jobs += pending_jobs.count()
+            pending_jobs.delete()  # Cancel the jobs
+        except Exception as e:
+            logger.warning(f"Could not cancel deletion jobs for asset {asset.id}: {e}")
+        
+        # Recover the asset
+        asset.recover()
+        recovered_count += 1
+    
+    return {
+        "success": True,
+        "recovered_count": recovered_count,
+        "cancelled_jobs": cancelled_jobs
+    }
 
 @router.post("/workspaces/{uuid:workspace_id}/download", response=BulkDownloadResponseSchema)
 @decorate_view(check_workspace_permission(WorkspaceMember.Role.COMMENTER))

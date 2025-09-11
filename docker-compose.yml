@@ -33,5 +33,19 @@ services:
       db:
         condition: service_healthy
 
+  worker:
+    build: .
+    command: bash -c "PYTHONPATH=/app chancy --app crops.chancy_worker.chancy_app worker start"
+    volumes:
+      - .:/app
+    environment:
+      - ENV_FILE=/app/.env
+      - DJANGO_SETTINGS_MODULE=crops.settings
+      - DEBUG=True
+      - DATABASE_URL=postgres://crops_user:crops_password@db:5432/crops_db
+    depends_on:
+      db:
+        condition: service_healthy
+
 volumes:
   postgres_data:

@@ -6,9 +6,8 @@ This guide provides comprehensive instructions for deploying the Crops Django ba
 
 The deployment consists of:
 - **Web Container**: Django application with Gunicorn
-- **Celery Worker**: Background task processing
-- **Celery Beat**: Scheduled task execution
-- **PostgreSQL RDS**: Production database
+- **Chancy Worker**: Background job processing (replaces Celery)
+- **PostgreSQL RDS**: Production database (also stores Chancy jobs)
 - **ElastiCache Redis**: Caching and message broker
 
 ## Prerequisites
@@ -98,7 +97,6 @@ aws lightsail create-container-service \
 ```bash
 # Build images
 docker build -t crops-backend-web:latest .
-docker build -f Dockerfile.celery -t crops-backend-celery:latest .
 
 # Push to Lightsail
 aws lightsail push-container-image \
@@ -106,10 +104,6 @@ aws lightsail push-container-image \
     --label web \
     --image crops-backend-web:latest
 
-aws lightsail push-container-image \
-    --service-name crops-backend \
-    --label celery \
-    --image crops-backend-celery:latest
 ```
 
 ### 3. Deploy Configuration
@@ -127,8 +121,8 @@ aws lightsail create-container-service-deployment \
 - Non-root user for security
 - Health checks included
 
-### lightsail-containers.json
-- Container definitions for web, celery, and celery-beat
+### containers.json
+- Container definitions for web and chancy worker
 - Environment variable mapping
 - Health check configuration
 - Load balancer settings
@@ -173,10 +167,6 @@ aws lightsail get-container-log \
     --service-name crops-backend \
     --container-name web
 
-# View Celery logs
-aws lightsail get-container-log \
-    --service-name crops-backend \
-    --container-name celery
 ```
 
 ### Health Checks
@@ -232,25 +222,46 @@ Lightsail Containers provides zero-downtime deployments through:
 
 ## Database Migrations
 
-Run migrations after deployment:
+### Automatic Migrations (Recommended)
+
+Migrations are **automatically handled** during deployment via the `containers.json` configuration:
+
+1. **Django migrations**: `python manage.py migrate --noinput`
+2. **Chancy migrations**: `PYTHONPATH=/app chancy --app crops.chancy_worker.chancy_app misc migrate`
+3. **Web server starts**: Only after migrations succeed
+
+This ensures:
+- ✅ Database schema is always up-to-date
+- ✅ Chancy job tables are created/updated
+- ✅ Zero-downtime deployments
+- ✅ Automatic rollback if migrations fail
+
+### Manual Migration (If Needed)
+
+If you need to run migrations separately:
 
 ```bash
-# Connect to running container
-aws lightsail push-container-image \
-    --service-name crops-backend \
-    --label migrate \
-    --image crops-backend-web:latest
+# Django migrations only
+docker compose exec web python manage.py migrate
 
-# Run one-time migration container
-aws lightsail create-container-service-deployment \
+# Chancy migrations only
+docker compose exec web bash -c "PYTHONPATH=/app chancy --app crops.chancy_worker.chancy_app misc migrate"
+
+# Both migrations
+docker compose exec web bash -c "python manage.py migrate && PYTHONPATH=/app chancy --app crops.chancy_worker.chancy_app misc migrate"
+```
+
+### Production Migration Command
+
+For production containers:
+
+```bash
+# View migration logs
+aws lightsail get-container-log \
     --service-name crops-backend \
-    --containers '{
-        "migrate": {
-            "image": ":crops-backend.migrate.latest",
-            "command": ["python", "manage.py", "migrate"],
-            "environment": {...}
-        }
-    }'
+    --container-name web \
+    --region us-east-2 \
+    --filter-pattern "migrate"
 ```
 
 ## Troubleshooting
@@ -277,6 +288,17 @@ aws lightsail create-container-service-deployment \
    - Check CloudFront distribution
    - Confirm AWS credentials
 
+5. **Chancy jobs not processing**
+   - Check if Chancy worker container is running
+   - Verify `chancy_jobs` table exists in database
+   - Check worker logs for errors
+   - Ensure `PYTHONPATH=/app` is set in worker command
+
+6. **Chancy migration failures**
+   - Check database connectivity
+   - Verify Django app is properly configured with `chancy.contrib.django`
+   - Ensure worker module can import Django models
+
 ### Log Analysis
 
 ```bash
@@ -289,6 +311,18 @@ aws lightsail get-container-log \
     --service-name crops-backend \
     --container-name web \
     --filter-pattern "ERROR"
+
+# View Chancy worker logs
+aws lightsail get-container-log \
+    --service-name crops-backend \
+    --container-name worker \
+    --filter-pattern "chancy"
+
+# Check migration status
+aws lightsail get-container-log \
+    --service-name crops-backend \
+    --container-name web \
+    --filter-pattern "migrate"
 ```
 
 ## Security Considerations

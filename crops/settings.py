@@ -40,8 +40,6 @@ env = environ.Env(
     AWS_S3_CUSTOM_DOMAIN=(str),
     AWS_STORAGE_BUCKET_NAME=(str),
     AWS_S3_LOCATION=(str, 'us-east-2'),
-    CELERY_BROKER_URL=(str, 'redis://:tzJ*cEscpUonRqAoVAQ9TNB%8KkGSD58%3xeNN^4@10.0.0.6:6379/0'),
-    CELERY_RESULT_BACKEND=(str, 'redis://:tzJ*cEscpUonRqAoVAQ9TNB%8KkGSD58%3xeNN^4@10.0.0.6:6379/1'),
     LAMBDA_AUTH_TOKEN=(str, 'supersecret'),
 )
 
@@ -77,7 +75,9 @@ INSTALLED_APPS = [
     
     # Notification system
     'notifications',
-    'django_celery_beat',
+    
+    # Background job processing
+    'chancy.contrib.django',
 ]
 
 MIDDLEWARE = [
@@ -325,14 +325,6 @@ NOTIFICATIONS_NOTIFICATION_MODEL = 'notifications.Notification'
 NOTIFICATIONS_SOFT_DELETE = True
 NOTIFICATIONS_USE_JSONFIELD = True
 
-# Celery Configuration (extending your existing setup)
-CELERY_ACCEPT_CONTENT = ['json']
-CELERY_TASK_SERIALIZER = 'json'
-CELERY_RESULT_SERIALIZER = 'json'
-CELERY_TIMEZONE = TIME_ZONE
-
-# Celery Beat Configuration for periodic tasks
-CELERY_BEAT_SCHEDULER = 'django_celery_beat.schedulers:DatabaseScheduler'
 
 # Email Batching Settings
 EMAIL_BATCH_FREQUENCY = 5  # minutes
