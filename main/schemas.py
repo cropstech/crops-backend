@@ -1188,6 +1188,21 @@ class TagFilter(Schema):
     includes: Optional[List[str]] = Field(None, description="Assets must include all of these tags")
     excludes: Optional[List[str]] = Field(None, description="Assets must not include any of these tags")
 
+class ColorFilter(Schema):
+    """Filter for colors"""
+    dominant_colors: Optional[List[str]] = Field(None, description="Filter by dominant colors (CSS names, simplified names, or hex codes)")
+    simplified_colors: Optional[List[str]] = Field(None, description="Filter by simplified color categories")
+    color_search: Optional[str] = Field(None, description="Search for colors by name or hex code")
+
+class ImageQualityFilter(Schema):
+    """Filter for image quality metrics"""
+    min_contrast: Optional[float] = Field(None, description="Minimum contrast score")
+    max_contrast: Optional[float] = Field(None, description="Maximum contrast score")
+    min_sharpness: Optional[float] = Field(None, description="Minimum sharpness score")
+    max_sharpness: Optional[float] = Field(None, description="Maximum sharpness score")
+    min_brightness: Optional[float] = Field(None, description="Minimum brightness score")
+    max_brightness: Optional[float] = Field(None, description="Maximum brightness score")
+
 class AssetListFilters(Schema):
     """Complete filter configuration for asset listing"""
     # Pagination and sorting
@@ -1204,6 +1219,10 @@ class AssetListFilters(Schema):
     favorite: Optional[bool] = Field(None, description="Filter by favorite status")
     date_uploaded_from: Optional[datetime] = Field(None, description="Uploaded after this date")
     date_uploaded_to: Optional[datetime] = Field(None, description="Uploaded before this date")
+    
+    # Color and quality filters
+    colors: Optional[ColorFilter] = Field(None, description="Color-based filters")
+    image_quality: Optional[ImageQualityFilter] = Field(None, description="Image quality filters")
 
 
 # Anonymous Actions Schemas

@@ -1472,6 +1472,52 @@ def list_assets(
             # Assets must not have ANY of the excluded tags
             query = query.exclude(tags__name__in=filters.tags.excludes)
     
+    # Apply color filtering
+    if filters.colors:
+        color_filter = filters.colors
+        
+        # Filter by dominant colors
+        if color_filter.dominant_colors:
+            # Use the color_search_text for efficient searching
+            color_query = Q()
+            for color in color_filter.dominant_colors:
+                color_query |= Q(ai_analysis__color_search_text__icontains=color.lower())
+            query = query.filter(color_query)
+        
+        # Filter by simplified colors
+        if color_filter.simplified_colors:
+            # Use JSON field filtering for exact matches
+            simplified_query = Q()
+            for color in color_filter.simplified_colors:
+                simplified_query |= Q(ai_analysis__simplified_colors__contains=[color])
+            query = query.filter(simplified_query)
+        
+        # General color search
+        if color_filter.color_search:
+            query = query.filter(ai_analysis__color_search_text__icontains=color_filter.color_search.lower())
+    
+    # Apply image quality filtering
+    if filters.image_quality:
+        quality_filter = filters.image_quality
+        
+        # Filter by contrast
+        if quality_filter.min_contrast is not None:
+            query = query.filter(ai_analysis__image_properties__quality__contrast__gte=quality_filter.min_contrast)
+        if quality_filter.max_contrast is not None:
+            query = query.filter(ai_analysis__image_properties__quality__contrast__lte=quality_filter.max_contrast)
+        
+        # Filter by sharpness
+        if quality_filter.min_sharpness is not None:
+            query = query.filter(ai_analysis__image_properties__quality__sharpness__gte=quality_filter.min_sharpness)
+        if quality_filter.max_sharpness is not None:
+            query = query.filter(ai_analysis__image_properties__quality__sharpness__lte=quality_filter.max_sharpness)
+        
+        # Filter by brightness
+        if quality_filter.min_brightness is not None:
+            query = query.filter(ai_analysis__image_properties__quality__brightness__gte=quality_filter.min_brightness)
+        if quality_filter.max_brightness is not None:
+            query = query.filter(ai_analysis__image_properties__quality__brightness__lte=quality_filter.max_brightness)
+    
     # Determine the sort order
     order_by = filters.order_by
     

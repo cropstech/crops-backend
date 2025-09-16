@@ -647,8 +647,16 @@ class AssetAnalysis(models.Model):
     labels = models.JSONField(default=list, help_text="AI-detected objects/scenes")
     moderation_labels = models.JSONField(default=list, help_text="Content moderation results")
     
+    # Image properties and color data
+    image_properties = models.JSONField(default=dict, help_text="Image quality metrics and color analysis")
+    dominant_colors = models.JSONField(default=list, help_text="Dominant colors with percentages")
+    simplified_colors = models.JSONField(default=list, help_text="Simplified color names for easy filtering")
+    
     # Text field for full-text search
     searchable_text = models.TextField(blank=True, help_text="Flattened text of all labels for searching")
+    
+    # Color search text for efficient filtering
+    color_search_text = models.TextField(blank=True, help_text="Flattened color data for searching")
     
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -672,6 +680,9 @@ class AssetAnalysis(models.Model):
         
         # Join all texts with spaces for better search
         self.searchable_text = ' '.join(label_texts)
+        
+        # Extract color data for searching
+        self._extract_color_search_data()
         
         super().save(*args, **kwargs)
         
@@ -729,6 +740,66 @@ class AssetAnalysis(models.Model):
             import logging
             logger = logging.getLogger(__name__)
             logger.error(f"Failed to create AI tag '{name}': {e}")
+    
+    def _extract_color_search_data(self):
+        """Extract color data into searchable text with color aliases"""
+        color_texts = []
+        
+        # Color aliases for better matching
+        color_aliases = {
+            'red': ['red', 'crimson', 'scarlet', 'cherry', 'rose', 'coral'],
+            'blue': ['blue', 'navy', 'azure', 'cyan', 'cobalt', 'sapphire'],
+            'green': ['green', 'lime', 'emerald', 'forest', 'mint', 'olive'],
+            'yellow': ['yellow', 'gold', 'amber', 'lemon', 'cream'],
+            'purple': ['purple', 'violet', 'lavender', 'plum', 'magenta'],
+            'orange': ['orange', 'coral', 'peach', 'tangerine', 'amber'],
+            'pink': ['pink', 'rose', 'coral', 'salmon', 'fuchsia'],
+            'brown': ['brown', 'tan', 'beige', 'coffee', 'chocolate'],
+            'black': ['black', 'charcoal', 'ebony'],
+            'white': ['white', 'ivory', 'cream', 'pearl'],
+            'grey': ['grey', 'gray', 'silver', 'slate', 'ash']
+        }
+        
+        # Process dominant colors
+        for color in self.dominant_colors:
+            if isinstance(color, dict):
+                # Add CSS color names
+                if 'css_color' in color:
+                    css_color = color['css_color'].lower()
+                    color_texts.append(css_color)
+                    
+                    # Add aliases for this color
+                    for base_color, aliases in color_aliases.items():
+                        if any(alias in css_color for alias in aliases):
+                            color_texts.extend(aliases)
+                            break
+                
+                # Add simplified color names
+                if 'simplified_color' in color:
+                    simplified = color['simplified_color'].lower()
+                    color_texts.append(simplified)
+                    
+                    # Add aliases for simplified colors
+                    if simplified in color_aliases:
+                        color_texts.extend(color_aliases[simplified])
+                
+                # Add hex codes (without #)
+                if 'hex_code' in color:
+                    color_texts.append(color['hex_code'].replace('#', '').lower())
+        
+        # Process simplified colors list
+        if isinstance(self.simplified_colors, list):
+            for color in self.simplified_colors:
+                if isinstance(color, str):
+                    simplified = color.lower()
+                    color_texts.append(simplified)
+                    
+                    # Add aliases for simplified colors
+                    if simplified in color_aliases:
+                        color_texts.extend(color_aliases[simplified])
+        
+        # Join all color texts with spaces and remove duplicates
+        self.color_search_text = ' '.join(set(color_texts))
     
     class Meta:
         verbose_name_plural = "Asset analyses"

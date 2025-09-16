@@ -200,6 +200,18 @@ def asset_processed_webhook(request):
             
             # Store analysis data if available
             if analysis_data and isinstance(analysis_data, dict):
+                # Extract color and image properties data
+                image_properties = analysis_data.get('image_properties', {})
+                dominant_colors = image_properties.get('dominant_colors', [])
+                
+                # Extract simplified colors from dominant colors
+                simplified_colors = []
+                for color in dominant_colors:
+                    if isinstance(color, dict) and 'simplified_color' in color:
+                        simplified_colors.append(color['simplified_color'])
+                # Remove duplicates while preserving order
+                simplified_colors = list(dict.fromkeys(simplified_colors))
+                
                 # Create or update the AssetAnalysis record
                 analysis, created = AssetAnalysis.objects.update_or_create(
                     asset=asset,
@@ -207,6 +219,9 @@ def asset_processed_webhook(request):
                         'raw_analysis': analysis_data,
                         'labels': analysis_data.get('labels', []) if analysis_data.get('labels') is not None else [],
                         'moderation_labels': analysis_data.get('moderation_labels', []) if analysis_data.get('moderation_labels') is not None else [],
+                        'image_properties': image_properties,
+                        'dominant_colors': dominant_colors,
+                        'simplified_colors': simplified_colors,
                     }
                 )
             
