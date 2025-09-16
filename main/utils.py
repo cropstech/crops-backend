@@ -90,6 +90,83 @@ def create_error_response(message, status=403):
         status=status
     )
 
+def is_document_mime_type(mime_type):
+    """
+    Check if a MIME type represents a document
+    """
+    document_mime_types = {
+        # PDF
+        'application/pdf',
+        
+        # Microsoft Office formats (legacy)
+        'application/msword',
+        'application/vnd.ms-excel',
+        'application/vnd.ms-powerpoint',
+        
+        # Microsoft Office formats (modern)
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',  # docx
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.template',   # dotx
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',        # xlsx
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.template',     # xltx
+        'application/vnd.openxmlformats-officedocument.presentationml.presentation', # pptx
+        'application/vnd.openxmlformats-officedocument.presentationml.template',    # potx
+        'application/vnd.openxmlformats-officedocument.presentationml.slideshow',   # ppsx
+        
+        # OpenDocument formats (LibreOffice native)
+        'application/vnd.oasis.opendocument.text',                # odt
+        'application/vnd.oasis.opendocument.text-template',       # ott
+        'application/vnd.oasis.opendocument.spreadsheet',         # ods
+        'application/vnd.oasis.opendocument.spreadsheet-template', # ots
+        'application/vnd.oasis.opendocument.presentation',        # odp
+        'application/vnd.oasis.opendocument.presentation-template', # otp
+        'application/vnd.oasis.opendocument.graphics',            # odg
+        'application/vnd.oasis.opendocument.graphics-template',   # otg
+        'application/vnd.oasis.opendocument.formula',             # odf
+        'application/vnd.oasis.opendocument.formula-template',    # otf
+        'application/vnd.oasis.opendocument.database',            # odb
+        'application/vnd.oasis.opendocument.chart',               # odc
+        'application/vnd.oasis.opendocument.image',               # odi
+        
+        # Apple formats
+        'application/vnd.apple.keynote',  # key
+        'application/vnd.apple.pages',    # pages
+        'application/vnd.apple.numbers',  # numbers
+        
+        # Other document formats
+        'application/rtf',
+        'application/postscript',
+        'application/x-tex',
+        'application/x-latex',
+    }
+    
+    # Check exact matches first
+    if mime_type in document_mime_types:
+        return True
+    
+    # Check prefixes for text files and other document types
+    document_prefixes = [
+        'text/',  # All text files
+    ]
+    
+    return any(mime_type.startswith(prefix) for prefix in document_prefixes)
+
+def get_document_type(mime_type):
+    """
+    Get the document type category based on MIME type
+    """
+    if mime_type == 'application/pdf':
+        return 'pdf'
+    elif 'office' in mime_type or 'msword' in mime_type or 'ms-' in mime_type:
+        return 'office'
+    elif 'opendocument' in mime_type or 'oasis' in mime_type:
+        return 'opendocument'
+    elif 'apple' in mime_type:
+        return 'apple'
+    elif mime_type.startswith('text/'):
+        return 'text'
+    else:
+        return 'document'
+
 def clean_metadata_for_json(value):
     """
     Recursively clean metadata to ensure JSON serialization works
@@ -186,6 +263,12 @@ def process_file_metadata(file_or_path, user) -> FileMetadata:
             except Exception as e:
                 metadata['error'] = str(e)
                 
+        elif is_document_mime_type(mime_type):
+            file_type = 'DOCUMENT'
+            # Additional document metadata could be added here in the future
+            metadata.update({
+                'document_type': get_document_type(mime_type)
+            })
         else:
             file_type = 'OTHER'
 
@@ -330,6 +413,8 @@ def quick_file_metadata(file_or_path) -> FileMetadata:
             file_type = 'VIDEO'
         elif mime_type.startswith('audio/'):
             file_type = 'AUDIO'
+        elif is_document_mime_type(mime_type):
+            file_type = 'DOCUMENT'
 
         return FileMetadata(
             name=name,
