@@ -652,11 +652,35 @@ class AssetAnalysis(models.Model):
     dominant_colors = models.JSONField(default=list, help_text="Dominant colors with percentages")
     simplified_colors = models.JSONField(default=list, help_text="Simplified color names for easy filtering")
     
+    # EXIF data for searchable metadata
+    exif_data = models.JSONField(default=dict, help_text="Complete EXIF data from image")
+    
+    # GPS coordinates for location-based filtering
+    latitude = models.FloatField(null=True, blank=True, help_text="GPS latitude coordinate")
+    longitude = models.FloatField(null=True, blank=True, help_text="GPS longitude coordinate")
+    altitude = models.FloatField(null=True, blank=True, help_text="GPS altitude in meters")
+    
+    # Camera information for device filtering
+    camera_make = models.CharField(max_length=100, blank=True, help_text="Camera manufacturer (e.g., Apple, Canon)")
+    camera_model = models.CharField(max_length=200, blank=True, help_text="Camera model (e.g., iPhone 11 Pro Max)")
+    
+    # Photo capture date/time (when photo was actually taken, not uploaded)
+    date_taken = models.DateTimeField(null=True, blank=True, help_text="When the photo was originally taken")
+    
+    # Technical camera settings
+    iso_speed = models.IntegerField(null=True, blank=True, help_text="ISO speed rating")
+    aperture = models.CharField(max_length=20, blank=True, help_text="F-stop aperture value")
+    exposure_time = models.CharField(max_length=50, blank=True, help_text="Shutter speed/exposure time")
+    focal_length = models.CharField(max_length=20, blank=True, help_text="Focal length in mm")
+    
     # Text field for full-text search
     searchable_text = models.TextField(blank=True, help_text="Flattened text of all labels for searching")
     
     # Color search text for efficient filtering
     color_search_text = models.TextField(blank=True, help_text="Flattened color data for searching")
+    
+    # EXIF search text for camera/technical data searching
+    exif_search_text = models.TextField(blank=True, help_text="Flattened EXIF data for searching")
     
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -683,6 +707,9 @@ class AssetAnalysis(models.Model):
         
         # Extract color data for searching
         self._extract_color_search_data()
+        
+        # Extract EXIF data for searching
+        self._extract_exif_data()
         
         super().save(*args, **kwargs)
         
@@ -800,6 +827,160 @@ class AssetAnalysis(models.Model):
         
         # Join all color texts with spaces and remove duplicates
         self.color_search_text = ' '.join(set(color_texts))
+    
+    def _extract_exif_data(self):
+        """Extract EXIF data into searchable fields and text"""
+        from datetime import datetime
+        
+        if not isinstance(self.exif_data, dict):
+            return
+        
+        exif_texts = []
+        raw_exif = self.exif_data.get('raw', {})
+        
+        if not isinstance(raw_exif, dict):
+            return
+        
+        # Helper function to parse GPS coordinates
+        def parse_gps_coordinate(gps_list_str):
+            """Parse GPS coordinate from EXIF format like '[39, 3, 121/25]'"""
+            if not gps_list_str or not isinstance(gps_list_str, str):
+                return None
+            try:
+                # Remove brackets and split
+                coords_str = gps_list_str.strip('[]')
+                parts = [part.strip() for part in coords_str.split(',')]
+                if len(parts) >= 3:
+                    degrees = float(parts[0])
+                    minutes = float(parts[1])
+                    # Handle fractions in seconds like "121/25"
+                    seconds_str = parts[2]
+                    if '/' in seconds_str:
+                        num, denom = seconds_str.split('/')
+                        seconds = float(num) / float(denom)
+                    else:
+                        seconds = float(seconds_str)
+                    
+                    # Convert to decimal degrees
+                    decimal = degrees + (minutes / 60.0) + (seconds / 3600.0)
+                    return decimal
+            except (ValueError, ZeroDivisionError, IndexError):
+                pass
+            return None
+        
+        def parse_fraction(fraction_str):
+            """Parse fraction string like '244927/940' or '9/5'"""
+            if not fraction_str or not isinstance(fraction_str, str):
+                return None
+            try:
+                if '/' in fraction_str:
+                    num, denom = fraction_str.split('/')
+                    return float(num) / float(denom)
+                else:
+                    return float(fraction_str)
+            except (ValueError, ZeroDivisionError):
+                pass
+            return None
+        
+        # Extract GPS coordinates from raw EXIF
+        gps_lat_str = raw_exif.get('GPS GPSLatitude')
+        gps_lng_str = raw_exif.get('GPS GPSLongitude')
+        gps_lat_ref = raw_exif.get('GPS GPSLatitudeRef', '')
+        gps_lng_ref = raw_exif.get('GPS GPSLongitudeRef', '')
+        gps_alt_str = raw_exif.get('GPS GPSAltitude')
+        
+        # Parse latitude
+        if gps_lat_str:
+            lat = parse_gps_coordinate(gps_lat_str)
+            if lat is not None:
+                # Apply hemisphere reference
+                if gps_lat_ref.upper() == 'S':
+                    lat = -lat
+                self.latitude = lat
+        
+        # Parse longitude
+        if gps_lng_str:
+            lng = parse_gps_coordinate(gps_lng_str)
+            if lng is not None:
+                # Apply hemisphere reference
+                if gps_lng_ref.upper() == 'W':
+                    lng = -lng
+                self.longitude = lng
+        
+        # Parse altitude
+        if gps_alt_str:
+            alt = parse_fraction(gps_alt_str)
+            if alt is not None:
+                self.altitude = alt
+        
+        # Extract camera information from raw EXIF
+        camera_make = raw_exif.get('Image Make') or raw_exif.get('Make')
+        camera_model = raw_exif.get('Image Model') or raw_exif.get('Model')
+        
+        if camera_make:
+            self.camera_make = str(camera_make)[:100]
+            exif_texts.append(camera_make.lower())
+        
+        if camera_model:
+            self.camera_model = str(camera_model)[:200]
+            exif_texts.append(camera_model.lower())
+        
+        # Extract date taken from raw EXIF
+        date_original = (raw_exif.get('EXIF DateTimeOriginal') or 
+                        raw_exif.get('Image DateTime') or 
+                        raw_exif.get('DateTime'))
+        
+        if date_original:
+            try:
+                # Parse EXIF datetime format: "2021:04:11 15:47:53"
+                self.date_taken = datetime.strptime(str(date_original), '%Y:%m:%d %H:%M:%S')
+            except (ValueError, TypeError):
+                pass
+        
+        # Extract technical settings from raw EXIF
+        # ISO Speed
+        iso = raw_exif.get('EXIF ISOSpeedRatings')
+        if iso and str(iso).isdigit():
+            self.iso_speed = int(iso)
+            exif_texts.append(f"iso{iso}")
+        
+        # Aperture (F-number) - parse fraction
+        aperture_raw = raw_exif.get('EXIF FNumber')
+        if aperture_raw:
+            aperture_val = parse_fraction(str(aperture_raw))
+            if aperture_val:
+                # Format as f/X.X
+                self.aperture = f"f/{aperture_val:.1f}"
+                exif_texts.append(f"f{aperture_val}")
+            else:
+                self.aperture = str(aperture_raw)[:20]
+        
+        # Exposure time
+        exposure = raw_exif.get('EXIF ExposureTime')
+        if exposure:
+            self.exposure_time = str(exposure)[:50]
+            exif_texts.append(f"exposure{exposure}")
+        
+        # Focal length - parse fraction and convert to mm
+        focal_raw = raw_exif.get('EXIF FocalLength')
+        if focal_raw:
+            focal_val = parse_fraction(str(focal_raw))
+            if focal_val:
+                self.focal_length = f"{focal_val:.0f}mm"
+                exif_texts.append(f"focal{focal_val}")
+            else:
+                self.focal_length = str(focal_raw)[:20]
+        
+        # Add lens information if available
+        lens_make = raw_exif.get('EXIF LensMake')
+        lens_model = raw_exif.get('EXIF LensModel')
+        if lens_make:
+            exif_texts.append(str(lens_make).lower())
+        if lens_model:
+            exif_texts.append(str(lens_model).lower())
+        
+        # Join all EXIF texts for searching
+        self.exif_search_text = ' '.join(set(exif_texts))
     
     class Meta:
         verbose_name_plural = "Asset analyses"

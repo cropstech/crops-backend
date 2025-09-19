@@ -136,10 +136,14 @@ def asset_processed_webhook(request):
             processed_files = body.get('processed', {})
             analysis_data = body.get('analysis', {})
             
+            # Clean metadata to remove invalid Unicode sequences
+            if metadata_from_webhook:
+                metadata_from_webhook = _clean_json_data(metadata_from_webhook)
+            
             # Set status to COMPLETED
             asset.status = Asset.Status.COMPLETED
             
-            # Assign metadata directly as it is in the webhook payload
+            # Assign cleaned metadata
             if metadata_from_webhook:
                 asset.metadata = metadata_from_webhook
             
@@ -200,8 +204,11 @@ def asset_processed_webhook(request):
             
             # Store analysis data if available
             if analysis_data and isinstance(analysis_data, dict):
+                # Clean analysis data to remove invalid Unicode sequences
+                cleaned_analysis_data = _clean_json_data(analysis_data)
+                
                 # Extract color and image properties data
-                image_properties = analysis_data.get('image_properties', {})
+                image_properties = cleaned_analysis_data.get('image_properties', {})
                 dominant_colors = image_properties.get('dominant_colors', [])
                 
                 # Extract simplified colors from dominant colors
@@ -212,16 +219,20 @@ def asset_processed_webhook(request):
                 # Remove duplicates while preserving order
                 simplified_colors = list(dict.fromkeys(simplified_colors))
                 
+                # Extract EXIF data
+                exif_data = cleaned_analysis_data.get('exif', {})
+                
                 # Create or update the AssetAnalysis record
                 analysis, created = AssetAnalysis.objects.update_or_create(
                     asset=asset,
                     defaults={
-                        'raw_analysis': analysis_data,
-                        'labels': analysis_data.get('labels', []) if analysis_data.get('labels') is not None else [],
-                        'moderation_labels': analysis_data.get('moderation_labels', []) if analysis_data.get('moderation_labels') is not None else [],
+                        'raw_analysis': cleaned_analysis_data,
+                        'labels': cleaned_analysis_data.get('labels', []) if cleaned_analysis_data.get('labels') is not None else [],
+                        'moderation_labels': cleaned_analysis_data.get('moderation_labels', []) if cleaned_analysis_data.get('moderation_labels') is not None else [],
                         'image_properties': image_properties,
                         'dominant_colors': dominant_colors,
                         'simplified_colors': simplified_colors,
+                        'exif_data': exif_data,
                     }
                 )
             
@@ -429,6 +440,19 @@ def _extract_results_from_webhook_payload(body: Dict[str, Any]) -> Optional[Dict
         }
 
 
-
-
- 
+def _clean_json_data(data):
+    """
+    Recursively clean JSON data using ftfy library to fix Unicode issues.
+    This handles encoding problems, null bytes, and other Unicode issues automatically.
+    """
+    from ftfy import fix_text
+    
+    if isinstance(data, dict):
+        return {key: _clean_json_data(value) for key, value in data.items()}
+    elif isinstance(data, list):
+        return [_clean_json_data(item) for item in data]
+    elif isinstance(data, str):
+        # ftfy automatically fixes most Unicode encoding issues
+        return fix_text(data)
+    else:
+        return data

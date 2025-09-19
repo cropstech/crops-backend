@@ -1203,6 +1203,39 @@ class ImageQualityFilter(Schema):
     min_brightness: Optional[float] = Field(None, description="Minimum brightness score")
     max_brightness: Optional[float] = Field(None, description="Maximum brightness score")
 
+class LocationFilter(Schema):
+    """Filter for GPS location data"""
+    latitude_min: Optional[float] = Field(None, description="Minimum latitude")
+    latitude_max: Optional[float] = Field(None, description="Maximum latitude")
+    longitude_min: Optional[float] = Field(None, description="Minimum longitude")
+    longitude_max: Optional[float] = Field(None, description="Maximum longitude")
+    altitude_min: Optional[float] = Field(None, description="Minimum altitude in meters")
+    altitude_max: Optional[float] = Field(None, description="Maximum altitude in meters")
+    has_gps: Optional[bool] = Field(None, description="Filter for assets with GPS data")
+
+class CameraFilter(Schema):
+    """Filter for camera/device information"""
+    camera_makes: Optional[List[str]] = Field(None, description="Filter by camera manufacturers (e.g., Apple, Canon)")
+    camera_models: Optional[List[str]] = Field(None, description="Filter by specific camera models")
+    camera_search: Optional[str] = Field(None, description="Search camera make/model/lens information")
+
+class TechnicalFilter(Schema):
+    """Filter for technical camera settings"""
+    iso_min: Optional[int] = Field(None, description="Minimum ISO speed")
+    iso_max: Optional[int] = Field(None, description="Maximum ISO speed")
+    aperture_values: Optional[List[str]] = Field(None, description="Filter by specific aperture values (e.g., 'f/1.8', 'f/2.8')")
+    exposure_times: Optional[List[str]] = Field(None, description="Filter by exposure times (e.g., '1/60', '1/100')")
+    focal_lengths: Optional[List[str]] = Field(None, description="Filter by focal lengths (e.g., '24mm', '50mm')")
+    date_taken_from: Optional[datetime] = Field(None, description="Photos taken after this date")
+    date_taken_to: Optional[datetime] = Field(None, description="Photos taken before this date")
+
+class ExifFilter(Schema):
+    """Combined EXIF data filters"""
+    location: Optional[LocationFilter] = Field(None, description="GPS location filters")
+    camera: Optional[CameraFilter] = Field(None, description="Camera/device filters")
+    technical: Optional[TechnicalFilter] = Field(None, description="Technical settings filters")
+    exif_search: Optional[str] = Field(None, description="General search across all EXIF data")
+
 class AssetListFilters(Schema):
     """Complete filter configuration for asset listing"""
     # Pagination and sorting
@@ -1223,6 +1256,9 @@ class AssetListFilters(Schema):
     # Color and quality filters
     colors: Optional[ColorFilter] = Field(None, description="Color-based filters")
     image_quality: Optional[ImageQualityFilter] = Field(None, description="Image quality filters")
+    
+    # EXIF metadata filters
+    exif: Optional[ExifFilter] = Field(None, description="EXIF metadata filters (GPS, camera, technical settings)")
 
 
 # Anonymous Actions Schemas

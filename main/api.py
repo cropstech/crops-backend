@@ -1518,6 +1518,98 @@ def list_assets(
         if quality_filter.max_brightness is not None:
             query = query.filter(ai_analysis__image_properties__quality__brightness__lte=quality_filter.max_brightness)
     
+    # Apply EXIF metadata filtering
+    if filters.exif:
+        exif_filter = filters.exif
+        
+        # Location/GPS filtering
+        if exif_filter.location:
+            location_filter = exif_filter.location
+            
+            # GPS coordinate range filtering
+            if location_filter.latitude_min is not None:
+                query = query.filter(ai_analysis__latitude__gte=location_filter.latitude_min)
+            if location_filter.latitude_max is not None:
+                query = query.filter(ai_analysis__latitude__lte=location_filter.latitude_max)
+            if location_filter.longitude_min is not None:
+                query = query.filter(ai_analysis__longitude__gte=location_filter.longitude_min)
+            if location_filter.longitude_max is not None:
+                query = query.filter(ai_analysis__longitude__lte=location_filter.longitude_max)
+            if location_filter.altitude_min is not None:
+                query = query.filter(ai_analysis__altitude__gte=location_filter.altitude_min)
+            if location_filter.altitude_max is not None:
+                query = query.filter(ai_analysis__altitude__lte=location_filter.altitude_max)
+            
+            # Filter for assets with/without GPS data
+            if location_filter.has_gps is not None:
+                if location_filter.has_gps:
+                    query = query.filter(ai_analysis__latitude__isnull=False, ai_analysis__longitude__isnull=False)
+                else:
+                    query = query.filter(Q(ai_analysis__latitude__isnull=True) | Q(ai_analysis__longitude__isnull=True))
+        
+        # Camera/device filtering
+        if exif_filter.camera:
+            camera_filter = exif_filter.camera
+            
+            # Filter by camera makes
+            if camera_filter.camera_makes:
+                make_query = Q()
+                for make in camera_filter.camera_makes:
+                    make_query |= Q(ai_analysis__camera_make__icontains=make)
+                query = query.filter(make_query)
+            
+            # Filter by camera models
+            if camera_filter.camera_models:
+                model_query = Q()
+                for model in camera_filter.camera_models:
+                    model_query |= Q(ai_analysis__camera_model__icontains=model)
+                query = query.filter(model_query)
+            
+            # General camera search
+            if camera_filter.camera_search:
+                query = query.filter(ai_analysis__exif_search_text__icontains=camera_filter.camera_search.lower())
+        
+        # Technical settings filtering
+        if exif_filter.technical:
+            technical_filter = exif_filter.technical
+            
+            # ISO range filtering
+            if technical_filter.iso_min is not None:
+                query = query.filter(ai_analysis__iso_speed__gte=technical_filter.iso_min)
+            if technical_filter.iso_max is not None:
+                query = query.filter(ai_analysis__iso_speed__lte=technical_filter.iso_max)
+            
+            # Aperture filtering
+            if technical_filter.aperture_values:
+                aperture_query = Q()
+                for aperture in technical_filter.aperture_values:
+                    aperture_query |= Q(ai_analysis__aperture__icontains=aperture)
+                query = query.filter(aperture_query)
+            
+            # Exposure time filtering
+            if technical_filter.exposure_times:
+                exposure_query = Q()
+                for exposure in technical_filter.exposure_times:
+                    exposure_query |= Q(ai_analysis__exposure_time__icontains=exposure)
+                query = query.filter(exposure_query)
+            
+            # Focal length filtering
+            if technical_filter.focal_lengths:
+                focal_query = Q()
+                for focal in technical_filter.focal_lengths:
+                    focal_query |= Q(ai_analysis__focal_length__icontains=focal)
+                query = query.filter(focal_query)
+            
+            # Date taken range filtering
+            if technical_filter.date_taken_from is not None:
+                query = query.filter(ai_analysis__date_taken__gte=technical_filter.date_taken_from)
+            if technical_filter.date_taken_to is not None:
+                query = query.filter(ai_analysis__date_taken__lte=technical_filter.date_taken_to)
+        
+        # General EXIF search
+        if exif_filter.exif_search:
+            query = query.filter(ai_analysis__exif_search_text__icontains=exif_filter.exif_search.lower())
+    
     # Determine the sort order
     order_by = filters.order_by
     
