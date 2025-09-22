@@ -1451,7 +1451,15 @@ def list_assets(
     # Apply other filters
     if filters:
         if filters.file_type:
-            query = query.filter(file_type__in=filters.file_type)
+            if isinstance(filters.file_type, list):
+                # Legacy format - maintain backward compatibility
+                query = query.filter(file_type__in=filters.file_type)
+            else:
+                # New FileTypeFilter format
+                if filters.file_type.includes:
+                    query = query.filter(file_type__in=filters.file_type.includes)
+                if filters.file_type.excludes:
+                    query = query.exclude(file_type__in=filters.file_type.excludes)
         
         if filters.favorite is not None:
             query = query.filter(favorite=filters.favorite)
@@ -1461,6 +1469,45 @@ def list_assets(
         
         if filters.date_uploaded_to:
             query = query.filter(date_uploaded__lte=filters.date_uploaded_to)
+    
+    # Apply OR groups filtering
+    if filters.or_groups:
+        or_query = Q()
+        for group in filters.or_groups:
+            group_query = Q()
+            
+            # File type filtering within group
+            if group.file_type:
+                if group.file_type.includes:
+                    group_query &= Q(file_type__in=group.file_type.includes)
+                if group.file_type.excludes:
+                    group_query &= ~Q(file_type__in=group.file_type.excludes)
+            
+            # Tag filtering within group
+            if group.tags:
+                if group.tags.any_of:
+                    group_query &= Q(tags__name__in=group.tags.any_of)
+                if group.tags.all_of:
+                    for tag_name in group.tags.all_of:
+                        group_query &= Q(tags__name=tag_name)
+                if group.tags.none_of:
+                    group_query &= ~Q(tags__name__in=group.tags.none_of)
+            
+            # Other filters within group
+            if group.favorite is not None:
+                group_query &= Q(favorite=group.favorite)
+            if group.date_uploaded_from:
+                group_query &= Q(date_uploaded__gte=group.date_uploaded_from)
+            if group.date_uploaded_to:
+                group_query &= Q(date_uploaded__lte=group.date_uploaded_to)
+            if group.board_id:
+                group_query &= Q(boards__id=group.board_id)
+            if group.search:
+                group_query &= Q(file__icontains=group.search)
+                
+            or_query |= group_query
+        
+        query = query.filter(or_query)
     
     # Apply tag filtering
     if filters.tags:

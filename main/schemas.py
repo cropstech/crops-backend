@@ -1236,6 +1236,27 @@ class ExifFilter(Schema):
     technical: Optional[TechnicalFilter] = Field(None, description="Technical settings filters")
     exif_search: Optional[str] = Field(None, description="General search across all EXIF data")
 
+class FileTypeFilter(Schema):
+    """Enhanced file type filtering with include/exclude support"""
+    includes: Optional[List[str]] = Field(None, description="Include only these file types")
+    excludes: Optional[List[str]] = Field(None, description="Exclude these file types")
+
+class TagFilterGroup(Schema):
+    """Tag filtering within OR groups - more flexible than main TagFilter"""
+    any_of: Optional[List[str]] = Field(None, description="Asset has ANY of these tags")
+    all_of: Optional[List[str]] = Field(None, description="Asset has ALL of these tags") 
+    none_of: Optional[List[str]] = Field(None, description="Asset has NONE of these tags")
+
+class FilterGroup(Schema):
+    """A group of filters combined with AND internally, OR with other groups"""
+    file_type: Optional[FileTypeFilter] = Field(None, description="File type filters for this group")
+    tags: Optional[TagFilterGroup] = Field(None, description="Tag filters for this group")
+    favorite: Optional[bool] = Field(None, description="Filter by favorite status")
+    date_uploaded_from: Optional[datetime] = Field(None, description="Uploaded after this date")
+    date_uploaded_to: Optional[datetime] = Field(None, description="Uploaded before this date")
+    board_id: Optional[UUID] = Field(None, description="Filter by specific board")
+    search: Optional[str] = Field(None, description="Search term for file names")
+
 class AssetListFilters(Schema):
     """Complete filter configuration for asset listing"""
     # Pagination and sorting
@@ -1247,8 +1268,8 @@ class AssetListFilters(Schema):
     
     # Filter options
     custom_fields: Optional[List[CustomFieldFilter]] = Field(None, description="Custom field filters")
-    tags: Optional[TagFilter] = Field(None, description="Tag filters (future implementation)")
-    file_type: Optional[List[str]] = Field(None, description="Filter by file types (IMAGE, VIDEO, etc.)")
+    tags: Optional[TagFilter] = Field(None, description="Tag filters")
+    file_type: Optional[Union[List[str], FileTypeFilter]] = Field(None, description="File type filters - legacy list format or enhanced include/exclude")
     favorite: Optional[bool] = Field(None, description="Filter by favorite status")
     date_uploaded_from: Optional[datetime] = Field(None, description="Uploaded after this date")
     date_uploaded_to: Optional[datetime] = Field(None, description="Uploaded before this date")
@@ -1259,6 +1280,9 @@ class AssetListFilters(Schema):
     
     # EXIF metadata filters
     exif: Optional[ExifFilter] = Field(None, description="EXIF metadata filters (GPS, camera, technical settings)")
+    
+    # OR groups support
+    or_groups: Optional[List[FilterGroup]] = Field(None, description="Groups of filters combined with OR logic")
 
 
 # Anonymous Actions Schemas
