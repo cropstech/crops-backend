@@ -1160,11 +1160,24 @@ class NotificationSchema(Schema):
 
 class CustomFieldFilterValue(Schema):
     """Filter for a specific custom field value"""
+    condition_type: Optional[str] = Field(None, description="Filter condition type (for backward compatibility)")
+    option_id: Optional[int] = Field(None, description="Option ID for filtering (for backward compatibility)")
     is_: Optional[int] = Field(None, alias="is", description="Filter by specific option ID (for single/multi-select fields)")
     not_set: Optional[bool] = Field(None, description="Filter for fields that have no value set")
     contains: Optional[str] = Field(None, description="Text contains filter (for text fields)")
     date_from: Optional[datetime] = Field(None, description="Date range start (for date fields)")
     date_to: Optional[datetime] = Field(None, description="Date range end (for date fields)")
+    
+    @property
+    def option_value_id(self) -> Optional[int]:
+        """Get the option ID from either the new 'is' field or legacy fields"""
+        if self.is_ is not None:
+            return self.is_
+        elif self.option_id is not None:
+            return self.option_id
+        elif self.condition_type == "is" and self.option_id is not None:
+            return self.option_id
+        return None
 
 class CustomFieldFilter(Schema):
     """Filter configuration for a custom field"""
@@ -1184,14 +1197,33 @@ class TagSchema(Schema):
         return obj.assets.count()
 
 class TagFilter(Schema):
-    """Filter for tags"""
+    """Filter for tags with AI-specific filtering support"""
     includes: Optional[List[str]] = Field(None, description="Assets must include all of these tags")
     excludes: Optional[List[str]] = Field(None, description="Assets must not include any of these tags")
+    
+    # AI-specific filtering
+    ai_only: Optional[bool] = Field(None, description="Filter only AI-generated tags")
+    manual_only: Optional[bool] = Field(None, description="Filter only manually created tags")
+    tag_types: Optional[List[str]] = Field(None, description="Filter by specific tag types: MANUAL, AI_LABEL, AI_MODERATION")
+    min_confidence: Optional[float] = Field(None, description="Minimum confidence score for AI tags (0.0 - 1.0)")
+
+class DominantColorFilter(Schema):
+    """Filter for dominant colors with include/exclude support"""
+    includes: Optional[List[str]] = Field(None, description="Include assets with any of these dominant colors")
+    excludes: Optional[List[str]] = Field(None, description="Exclude assets with any of these dominant colors")
+
+class SimplifiedColorFilter(Schema):
+    """Filter for simplified colors with include/exclude support"""
+    includes: Optional[List[str]] = Field(None, description="Include assets with any of these simplified colors")
+    excludes: Optional[List[str]] = Field(None, description="Exclude assets with any of these simplified colors")
 
 class ColorFilter(Schema):
-    """Filter for colors"""
-    dominant_colors: Optional[List[str]] = Field(None, description="Filter by dominant colors (CSS names, simplified names, or hex codes)")
-    simplified_colors: Optional[List[str]] = Field(None, description="Filter by simplified color categories")
+    """Enhanced filter for colors with include/exclude support"""
+    # Enhanced color filtering with include/exclude
+    dominant_colors: Optional[DominantColorFilter] = Field(None, description="Dominant color filters with include/exclude support")
+    simplified_colors: Optional[SimplifiedColorFilter] = Field(None, description="Simplified color filters with include/exclude support")
+    
+    # General color search
     color_search: Optional[str] = Field(None, description="Search for colors by name or hex code")
 
 class ImageQualityFilter(Schema):
@@ -1246,11 +1278,18 @@ class TagFilterGroup(Schema):
     any_of: Optional[List[str]] = Field(None, description="Asset has ANY of these tags")
     all_of: Optional[List[str]] = Field(None, description="Asset has ALL of these tags") 
     none_of: Optional[List[str]] = Field(None, description="Asset has NONE of these tags")
+    
+    # AI-specific filtering for OR groups
+    ai_only: Optional[bool] = Field(None, description="Filter only AI-generated tags")
+    manual_only: Optional[bool] = Field(None, description="Filter only manually created tags")
+    tag_types: Optional[List[str]] = Field(None, description="Filter by specific tag types: MANUAL, AI_LABEL, AI_MODERATION")
+    min_confidence: Optional[float] = Field(None, description="Minimum confidence score for AI tags (0.0 - 1.0)")
 
 class FilterGroup(Schema):
     """A group of filters combined with AND internally, OR with other groups"""
     file_type: Optional[FileTypeFilter] = Field(None, description="File type filters for this group")
     tags: Optional[TagFilterGroup] = Field(None, description="Tag filters for this group")
+    colors: Optional[ColorFilter] = Field(None, description="Color filters for this group")
     favorite: Optional[bool] = Field(None, description="Filter by favorite status")
     date_uploaded_from: Optional[datetime] = Field(None, description="Uploaded after this date")
     date_uploaded_to: Optional[datetime] = Field(None, description="Uploaded before this date")
@@ -1269,7 +1308,7 @@ class AssetListFilters(Schema):
     # Filter options
     custom_fields: Optional[List[CustomFieldFilter]] = Field(None, description="Custom field filters")
     tags: Optional[TagFilter] = Field(None, description="Tag filters")
-    file_type: Optional[Union[List[str], FileTypeFilter]] = Field(None, description="File type filters - legacy list format or enhanced include/exclude")
+    file_type: Optional[FileTypeFilter] = Field(None, description="File type filters with include/exclude support")
     favorite: Optional[bool] = Field(None, description="Filter by favorite status")
     date_uploaded_from: Optional[datetime] = Field(None, description="Uploaded after this date")
     date_uploaded_to: Optional[datetime] = Field(None, description="Uploaded before this date")

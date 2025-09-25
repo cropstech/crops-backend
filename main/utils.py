@@ -279,7 +279,7 @@ def process_file_metadata(file_or_path, user) -> FileMetadata:
             else:
                 date_created = datetime.fromtimestamp(os.path.getctime(file_or_path.temporary_file_path()))
         except:
-            date_created = timezone.now()
+            date_created = None
 
         # Clean all metadata before returning
         metadata = clean_metadata_for_json(metadata)

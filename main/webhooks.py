@@ -10,8 +10,9 @@ from ninja.security import APIKeyHeader
 from .models import Asset, AssetAnalysis, AssetCheckerAnalysis
 from .services.asset_checker_service import AssetCheckerService, WebhookPayload
 from .services.webhook_models import WebhookPayloadSchema
-from datetime import datetime
+from datetime import datetime, timezone as dt_timezone
 from django.utils import timezone
+from dateutil import parser
 logger = logging.getLogger(__name__)
 
 # Create API Key authentication
@@ -176,11 +177,27 @@ def asset_processed_webhook(request):
                     asset.size = format_data['size']
                 if format_data.get('duration') is not None:
                     asset.duration = format_data['duration']
-                # Check for both None and empty string for creation_time
+            
+            # Extract creation date with priority: EXIF > format > current time
+            creation_date = None
+            
+            # Try to extract from EXIF first (for photos)
+            if analysis_data:
+                creation_date = _extract_creation_date_from_exif(analysis_data)
+            
+            # Fallback to format creation_time (for videos)
+            if not creation_date and 'format' in metadata_from_webhook:
+                format_data = metadata_from_webhook['format']
                 if format_data.get('creation_time') and format_data.get('creation_time').strip():
-                    asset.date_created = format_data['creation_time']
-                else:
-                    asset.date_created = timezone.now()
+                    try:
+                        creation_date = parser.parse(format_data['creation_time'])
+                        if creation_date.tzinfo:
+                            creation_date = timezone.make_naive(creation_date, dt_timezone.utc)
+                    except (ValueError, TypeError) as e:
+                        logger.warning(f"Failed to parse format creation_time '{format_data['creation_time']}': {e}")
+            
+            # Set the creation date or use current time as last resort
+            asset.date_created = creation_date or timezone.now()
 
             
             # Update mime type from codec if available
@@ -357,6 +374,63 @@ def asset_checker_webhook(request, check_id: str):
     except Exception as e:
         logger.error(f"Error processing asset checker webhook for {check_id}: {str(e)}")
         raise HttpError(500, f"Webhook processing failed: {str(e)}")
+
+
+def _extract_creation_date_from_exif(analysis_data: Dict[str, Any]) -> Optional[datetime]:
+    """
+    Extract creation date from EXIF metadata with timezone support.
+    Priority order: DateTimeOriginal > DateTime > creation_time from format
+    """
+    try:
+        exif_data = analysis_data.get('exif', {})
+        
+        if not exif_data:
+            return None
+            
+        # Get raw EXIF data
+        raw_exif = exif_data.get('raw', {})
+        datetime_section = exif_data.get('datetime', {})
+        
+        # Priority 1: EXIF DateTimeOriginal (most reliable for photos)
+        datetime_original = raw_exif.get('EXIF DateTimeOriginal') or datetime_section.get('datetime_original')
+        offset_original = raw_exif.get('EXIF OffsetTimeOriginal')
+        
+        # Priority 2: EXIF DateTime (general timestamp)
+        datetime_general = raw_exif.get('DateTime') or raw_exif.get('Image DateTime')
+        offset_general = raw_exif.get('EXIF OffsetTime')
+        
+        # Try to parse with timezone
+        for dt_str, offset_str in [(datetime_original, offset_original), (datetime_general, offset_general)]:
+            if dt_str:
+                try:
+                    # Parse the datetime string
+                    if isinstance(dt_str, str):
+                        # EXIF datetime format: "YYYY:MM:DD HH:MM:SS"
+                        # Convert to ISO format for parsing
+                        iso_dt_str = dt_str.replace(':', '-', 2)  # Only replace first two colons
+                        
+                        # Add timezone if available
+                        if offset_str:
+                            iso_dt_str += offset_str
+                        
+                        # Parse the datetime
+                        parsed_dt = parser.parse(iso_dt_str)
+                        
+                        # Convert to UTC if timezone-aware, otherwise assume UTC
+                        if parsed_dt.tzinfo:
+                            return timezone.make_naive(parsed_dt, dt_timezone.utc)
+                        else:
+                            return parsed_dt
+                            
+                except (ValueError, TypeError) as e:
+                    logger.warning(f"Failed to parse EXIF datetime '{dt_str}': {e}")
+                    continue
+        
+        return None
+        
+    except Exception as e:
+        logger.error(f"Error extracting creation date from EXIF: {e}")
+        return None
 
 
 def _extract_results_from_webhook_payload(body: Dict[str, Any]) -> Optional[Dict[str, Any]]:

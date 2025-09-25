@@ -1346,6 +1346,126 @@ def update_asset(request, workspace_id: UUID, asset_id: UUID, data: AssetUpdateS
     asset.save()
     return asset
 
+def _build_ai_aware_tag_group_filter(tag_names, tag_filter, filter_type):
+    """
+    Build Django Q object for AI-aware tag filtering in OR groups
+    
+    Args:
+        tag_names: List of tag names to filter by
+        tag_filter: TagFilterGroup object with AI parameters
+        filter_type: 'any_of', 'all_of', or 'none_of'
+    
+    Returns:
+        Django Q object for the tag filter
+    """
+    from django.db.models import Q
+    
+    if not tag_names:
+        return Q()
+    
+    # Build AI conditions
+    ai_conditions = Q()
+    
+    # Filter by AI vs manual tags
+    if getattr(tag_filter, 'ai_only', None):
+        ai_conditions &= Q(tags__is_ai_generated=True)
+    elif getattr(tag_filter, 'manual_only', None):
+        ai_conditions &= Q(tags__is_ai_generated=False)
+    
+    # Filter by tag types
+    if getattr(tag_filter, 'tag_types', None):
+        ai_conditions &= Q(tags__tag_type__in=tag_filter.tag_types)
+    
+    # Filter by minimum confidence score
+    if getattr(tag_filter, 'min_confidence', None) is not None:
+        ai_conditions &= Q(tags__confidence_score__gte=tag_filter.min_confidence)
+    
+    # Build the appropriate query based on filter type
+    if filter_type == 'any_of':
+        base_q = Q(tags__name__in=tag_names)
+    elif filter_type == 'all_of':
+        base_q = Q()
+        for tag_name in tag_names:
+            base_q &= Q(tags__name=tag_name)
+    elif filter_type == 'none_of':
+        base_q = ~Q(tags__name__in=tag_names)
+    else:
+        return Q()
+    
+    # Combine with AI conditions if any
+    if ai_conditions:
+        if filter_type == 'none_of':
+            # For none_of, we want to exclude tags that match both name and AI conditions
+            return ~(Q(tags__name__in=tag_names) & ai_conditions)
+        elif filter_type == 'all_of':
+            # For all_of with AI conditions, each tag must meet the AI criteria
+            combined_q = Q()
+            for tag_name in tag_names:
+                combined_q &= Q(tags__name=tag_name) & ai_conditions
+            return combined_q
+        else:
+            # For any_of, combine base query with AI conditions
+            return base_q & ai_conditions
+    
+    return base_q
+
+def _build_ai_aware_tag_filter(tag_names, tag_filter, exclude=False):
+    """
+    Build Django Q object for AI-aware tag filtering
+    
+    Args:
+        tag_names: List of tag names to filter by
+        tag_filter: TagFilter or TagFilterGroup object with AI parameters
+        exclude: If True, build exclude query instead of include
+    
+    Returns:
+        Django Q object for the tag filter
+    """
+    from django.db.models import Q
+    
+    if not tag_names:
+        return Q()
+    
+    # Base tag name filter
+    if exclude:
+        base_q = Q(tags__name__in=tag_names)
+    else:
+        # For includes, we need all tags (AND logic)
+        base_q = Q()
+        for tag_name in tag_names:
+            base_q &= Q(tags__name=tag_name)
+    
+    # Add AI-specific filters
+    ai_conditions = Q()
+    
+    # Filter by AI vs manual tags
+    if getattr(tag_filter, 'ai_only', None):
+        ai_conditions &= Q(tags__is_ai_generated=True)
+    elif getattr(tag_filter, 'manual_only', None):
+        ai_conditions &= Q(tags__is_ai_generated=False)
+    
+    # Filter by tag types
+    if getattr(tag_filter, 'tag_types', None):
+        ai_conditions &= Q(tags__tag_type__in=tag_filter.tag_types)
+    
+    # Filter by minimum confidence score
+    if getattr(tag_filter, 'min_confidence', None) is not None:
+        ai_conditions &= Q(tags__confidence_score__gte=tag_filter.min_confidence)
+    
+    # Combine base filter with AI conditions
+    if ai_conditions:
+        if exclude:
+            return base_q & ai_conditions
+        else:
+            # For includes with AI conditions, we need to ensure each tag meets the AI criteria
+            combined_q = Q()
+            for tag_name in tag_names:
+                tag_q = Q(tags__name=tag_name) & ai_conditions
+                combined_q &= tag_q
+            return combined_q
+    
+    return base_q
+
 @router.post("/workspaces/{uuid:workspace_id}/assets", response=PaginatedAssetResponse)
 @decorate_view(check_workspace_permission(WorkspaceMember.Role.COMMENTER))
 def list_assets(
@@ -1401,10 +1521,11 @@ def list_assets(
                     ).values_list('object_id', flat=True)
                 )
             
-            elif filter_criteria.is_:
-                logger.info(f"Filtering for assets that have field {field_obj} set to {filter_criteria.is_}")
+            elif filter_criteria.option_value_id:
+                option_id = filter_criteria.option_value_id
+                logger.info(f"Filtering for assets that have field {field_obj} set to option ID {option_id}")
                 # Filter by specific option value (single-select or multi-select)
-                option = get_object_or_404(CustomFieldOption, field=field_obj, id=filter_criteria.is_)
+                option = get_object_or_404(CustomFieldOption, field=field_obj, id=option_id)
                 
                 if field_obj.field_type == 'SINGLE_SELECT':
                     query = query.filter(
@@ -1451,15 +1572,10 @@ def list_assets(
     # Apply other filters
     if filters:
         if filters.file_type:
-            if isinstance(filters.file_type, list):
-                # Legacy format - maintain backward compatibility
-                query = query.filter(file_type__in=filters.file_type)
-            else:
-                # New FileTypeFilter format
-                if filters.file_type.includes:
-                    query = query.filter(file_type__in=filters.file_type.includes)
-                if filters.file_type.excludes:
-                    query = query.exclude(file_type__in=filters.file_type.excludes)
+            if filters.file_type.includes:
+                query = query.filter(file_type__in=filters.file_type.includes)
+            if filters.file_type.excludes:
+                query = query.exclude(file_type__in=filters.file_type.excludes)
         
         if filters.favorite is not None:
             query = query.filter(favorite=filters.favorite)
@@ -1483,15 +1599,56 @@ def list_assets(
                 if group.file_type.excludes:
                     group_query &= ~Q(file_type__in=group.file_type.excludes)
             
-            # Tag filtering within group
+            # Tag filtering within group with AI-awareness
             if group.tags:
                 if group.tags.any_of:
-                    group_query &= Q(tags__name__in=group.tags.any_of)
+                    any_of_q = _build_ai_aware_tag_group_filter(group.tags.any_of, group.tags, 'any_of')
+                    if any_of_q:
+                        group_query &= any_of_q
                 if group.tags.all_of:
-                    for tag_name in group.tags.all_of:
-                        group_query &= Q(tags__name=tag_name)
+                    all_of_q = _build_ai_aware_tag_group_filter(group.tags.all_of, group.tags, 'all_of')
+                    if all_of_q:
+                        group_query &= all_of_q
                 if group.tags.none_of:
-                    group_query &= ~Q(tags__name__in=group.tags.none_of)
+                    none_of_q = _build_ai_aware_tag_group_filter(group.tags.none_of, group.tags, 'none_of')
+                    if none_of_q:
+                        group_query &= none_of_q
+            
+            # Color filtering within group
+            if group.colors:
+                group_color_filter = group.colors
+                
+                # Handle dominant colors
+                if group_color_filter.dominant_colors:
+                    if group_color_filter.dominant_colors.includes:
+                        include_query = Q()
+                        for color in group_color_filter.dominant_colors.includes:
+                            include_query |= Q(ai_analysis__color_search_text__icontains=color.lower())
+                        group_query &= include_query
+                    
+                    if group_color_filter.dominant_colors.excludes:
+                        exclude_query = Q()
+                        for color in group_color_filter.dominant_colors.excludes:
+                            exclude_query |= Q(ai_analysis__color_search_text__icontains=color.lower())
+                        group_query &= ~exclude_query
+                
+                # Handle simplified colors
+                if group_color_filter.simplified_colors:
+                    if group_color_filter.simplified_colors.includes:
+                        include_query = Q()
+                        for color in group_color_filter.simplified_colors.includes:
+                            include_query |= Q(ai_analysis__simplified_colors__contains=[color])
+                        group_query &= include_query
+                    
+                    if group_color_filter.simplified_colors.excludes:
+                        exclude_query = Q()
+                        for color in group_color_filter.simplified_colors.excludes:
+                            exclude_query |= Q(ai_analysis__simplified_colors__contains=[color])
+                        group_query &= ~exclude_query
+                
+                # Handle general color search
+                if group_color_filter.color_search:
+                    group_query &= Q(ai_analysis__color_search_text__icontains=group_color_filter.color_search.lower())
             
             # Other filters within group
             if group.favorite is not None:
@@ -1509,15 +1666,18 @@ def list_assets(
         
         query = query.filter(or_query)
     
-    # Apply tag filtering
+    # Apply tag filtering with AI-awareness
     if filters.tags:
         if filters.tags.includes:
-            # Assets must have ALL of the included tags
-            for tag_name in filters.tags.includes:
-                query = query.filter(tags__name=tag_name)
+            # Use AI-aware tag filtering for includes
+            include_q = _build_ai_aware_tag_filter(filters.tags.includes, filters.tags, exclude=False)
+            if include_q:
+                query = query.filter(include_q)
         if filters.tags.excludes:
-            # Assets must not have ANY of the excluded tags
-            query = query.exclude(tags__name__in=filters.tags.excludes)
+            # Use AI-aware tag filtering for excludes
+            exclude_q = _build_ai_aware_tag_filter(filters.tags.excludes, filters.tags, exclude=True)
+            if exclude_q:
+                query = query.exclude(exclude_q)
     
     # Apply color filtering
     if filters.colors:
@@ -1525,19 +1685,35 @@ def list_assets(
         
         # Filter by dominant colors
         if color_filter.dominant_colors:
-            # Use the color_search_text for efficient searching
-            color_query = Q()
-            for color in color_filter.dominant_colors:
-                color_query |= Q(ai_analysis__color_search_text__icontains=color.lower())
-            query = query.filter(color_query)
+            if color_filter.dominant_colors.includes:
+                # Include assets with any of these dominant colors
+                include_query = Q()
+                for color in color_filter.dominant_colors.includes:
+                    include_query |= Q(ai_analysis__color_search_text__icontains=color.lower())
+                query = query.filter(include_query)
+            
+            if color_filter.dominant_colors.excludes:
+                # Exclude assets with any of these dominant colors
+                exclude_query = Q()
+                for color in color_filter.dominant_colors.excludes:
+                    exclude_query |= Q(ai_analysis__color_search_text__icontains=color.lower())
+                query = query.exclude(exclude_query)
         
         # Filter by simplified colors
         if color_filter.simplified_colors:
-            # Use JSON field filtering for exact matches
-            simplified_query = Q()
-            for color in color_filter.simplified_colors:
-                simplified_query |= Q(ai_analysis__simplified_colors__contains=[color])
-            query = query.filter(simplified_query)
+            if color_filter.simplified_colors.includes:
+                # Include assets with any of these simplified colors
+                include_query = Q()
+                for color in color_filter.simplified_colors.includes:
+                    include_query |= Q(ai_analysis__simplified_colors__contains=[color])
+                query = query.filter(include_query)
+            
+            if color_filter.simplified_colors.excludes:
+                # Exclude assets with any of these simplified colors
+                exclude_query = Q()
+                for color in color_filter.simplified_colors.excludes:
+                    exclude_query |= Q(ai_analysis__simplified_colors__contains=[color])
+                query = query.exclude(exclude_query)
         
         # General color search
         if color_filter.color_search:
@@ -2079,10 +2255,42 @@ def reorder_board_assets(request, workspace_id: UUID, board_id: UUID, data: Asse
 @router.get("/workspaces/{uuid:workspace_id}/tags", response=List[TagSchema])
 @decorate_view(check_workspace_permission(WorkspaceMember.Role.COMMENTER))
 def list_workspace_tags(request, workspace_id: UUID):
-    """Get all tags in a workspace with asset counts"""
+    """Get all manually created tags in a workspace with asset counts"""
     workspace = get_object_or_404(Workspace, id=workspace_id)
     
     tags = Tag.objects.filter(workspace=workspace, is_ai_generated=False).prefetch_related('assets').order_by('name')
+    return list(tags)
+
+@router.get("/workspaces/{uuid:workspace_id}/ai-tags", response=List[TagSchema])
+@decorate_view(check_workspace_permission(WorkspaceMember.Role.COMMENTER))
+def list_workspace_ai_tags(request, workspace_id: UUID, tag_type: str = None, min_confidence: float = None):
+    """
+    Get all AI-generated tags in a workspace with asset counts
+    
+    Args:
+        tag_type: Filter by tag type (AI_LABEL, AI_MODERATION)
+        min_confidence: Minimum confidence score (0.0 - 1.0)
+    """
+    workspace = get_object_or_404(Workspace, id=workspace_id)
+    
+    # Base query for AI tags
+    tags = Tag.objects.filter(workspace=workspace, is_ai_generated=True).prefetch_related('assets')
+    
+    # Filter by tag type if specified
+    if tag_type:
+        if tag_type not in ['AI_LABEL', 'AI_MODERATION']:
+            raise HttpError(400, "Invalid tag_type. Must be 'AI_LABEL' or 'AI_MODERATION'")
+        tags = tags.filter(tag_type=tag_type)
+    
+    # Filter by minimum confidence if specified
+    if min_confidence is not None:
+        if not 0.0 <= min_confidence <= 1.0:
+            raise HttpError(400, "min_confidence must be between 0.0 and 1.0")
+        tags = tags.filter(confidence_score__gte=min_confidence)
+    
+    # Order alphabetically by name
+    tags = tags.order_by('name')
+    
     return list(tags)
 
 
