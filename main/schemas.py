@@ -1196,16 +1196,31 @@ class TagSchema(Schema):
         """Get the number of assets with this tag"""
         return obj.assets.count()
 
-class TagFilter(Schema):
-    """Filter for tags with AI-specific filtering support"""
-    includes: Optional[List[str]] = Field(None, description="Assets must include all of these tags")
-    excludes: Optional[List[str]] = Field(None, description="Assets must not include any of these tags")
-    
-    # AI-specific filtering
-    ai_only: Optional[bool] = Field(None, description="Filter only AI-generated tags")
-    manual_only: Optional[bool] = Field(None, description="Filter only manually created tags")
-    tag_types: Optional[List[str]] = Field(None, description="Filter by specific tag types: MANUAL, AI_LABEL, AI_MODERATION")
+class ManualTagFilter(Schema):
+    """Filter for manually created tags"""
+    includes: Optional[List[str]] = Field(None, description="Assets must include all of these manual tags")
+    excludes: Optional[List[str]] = Field(None, description="Assets must not include any of these manual tags")
+
+class AITagFilter(Schema):
+    """Filter for AI-generated tags with confidence and type filtering"""
+    includes: Optional[List[str]] = Field(None, description="Assets must include all of these AI tags")
+    excludes: Optional[List[str]] = Field(None, description="Assets must not include any of these AI tags")
+    tag_types: Optional[List[str]] = Field(None, description="Filter by specific tag types: AI_LABEL, AI_MODERATION")
     min_confidence: Optional[float] = Field(None, description="Minimum confidence score for AI tags (0.0 - 1.0)")
+
+class TagFilter(Schema):
+    """Enhanced filter for tags supporting separate manual and AI tag filtering"""
+    # Legacy fields for backwards compatibility
+    includes: Optional[List[str]] = Field(None, description="Assets must include all of these tags (legacy - applies to all tags)")
+    excludes: Optional[List[str]] = Field(None, description="Assets must not include any of these tags (legacy - applies to all tags)")
+    ai_only: Optional[bool] = Field(None, description="Filter only AI-generated tags (legacy)")
+    manual_only: Optional[bool] = Field(None, description="Filter only manually created tags (legacy)")
+    tag_types: Optional[List[str]] = Field(None, description="Filter by specific tag types (legacy)")
+    min_confidence: Optional[float] = Field(None, description="Minimum confidence score for AI tags (legacy)")
+    
+    # New separate filtering
+    manual_tags: Optional[ManualTagFilter] = Field(None, description="Filter manually created tags")
+    ai_tags: Optional[AITagFilter] = Field(None, description="Filter AI-generated tags")
 
 class DominantColorFilter(Schema):
     """Filter for dominant colors with include/exclude support"""
@@ -1273,17 +1288,34 @@ class FileTypeFilter(Schema):
     includes: Optional[List[str]] = Field(None, description="Include only these file types")
     excludes: Optional[List[str]] = Field(None, description="Exclude these file types")
 
-class TagFilterGroup(Schema):
-    """Tag filtering within OR groups - more flexible than main TagFilter"""
-    any_of: Optional[List[str]] = Field(None, description="Asset has ANY of these tags")
-    all_of: Optional[List[str]] = Field(None, description="Asset has ALL of these tags") 
-    none_of: Optional[List[str]] = Field(None, description="Asset has NONE of these tags")
-    
-    # AI-specific filtering for OR groups
-    ai_only: Optional[bool] = Field(None, description="Filter only AI-generated tags")
-    manual_only: Optional[bool] = Field(None, description="Filter only manually created tags")
-    tag_types: Optional[List[str]] = Field(None, description="Filter by specific tag types: MANUAL, AI_LABEL, AI_MODERATION")
+class ManualTagFilterGroup(Schema):
+    """Manual tag filtering within OR groups"""
+    any_of: Optional[List[str]] = Field(None, description="Asset has ANY of these manual tags")
+    all_of: Optional[List[str]] = Field(None, description="Asset has ALL of these manual tags") 
+    none_of: Optional[List[str]] = Field(None, description="Asset has NONE of these manual tags")
+
+class AITagFilterGroup(Schema):
+    """AI tag filtering within OR groups"""
+    any_of: Optional[List[str]] = Field(None, description="Asset has ANY of these AI tags")
+    all_of: Optional[List[str]] = Field(None, description="Asset has ALL of these AI tags") 
+    none_of: Optional[List[str]] = Field(None, description="Asset has NONE of these AI tags")
+    tag_types: Optional[List[str]] = Field(None, description="Filter by specific tag types: AI_LABEL, AI_MODERATION")
     min_confidence: Optional[float] = Field(None, description="Minimum confidence score for AI tags (0.0 - 1.0)")
+
+class TagFilterGroup(Schema):
+    """Enhanced tag filtering within OR groups supporting separate manual and AI tag filtering"""
+    # Legacy fields for backwards compatibility
+    any_of: Optional[List[str]] = Field(None, description="Asset has ANY of these tags (legacy)")
+    all_of: Optional[List[str]] = Field(None, description="Asset has ALL of these tags (legacy)") 
+    none_of: Optional[List[str]] = Field(None, description="Asset has NONE of these tags (legacy)")
+    ai_only: Optional[bool] = Field(None, description="Filter only AI-generated tags (legacy)")
+    manual_only: Optional[bool] = Field(None, description="Filter only manually created tags (legacy)")
+    tag_types: Optional[List[str]] = Field(None, description="Filter by specific tag types (legacy)")
+    min_confidence: Optional[float] = Field(None, description="Minimum confidence score for AI tags (legacy)")
+    
+    # New separate filtering
+    manual_tags: Optional[ManualTagFilterGroup] = Field(None, description="Filter manually created tags")
+    ai_tags: Optional[AITagFilterGroup] = Field(None, description="Filter AI-generated tags")
 
 class FilterGroup(Schema):
     """A group of filters combined with AND internally, OR with other groups"""
@@ -1295,6 +1327,10 @@ class FilterGroup(Schema):
     date_uploaded_to: Optional[datetime] = Field(None, description="Uploaded before this date")
     board_id: Optional[UUID] = Field(None, description="Filter by specific board")
     search: Optional[str] = Field(None, description="Search term for file names")
+    
+    # Convenience fields for direct tag filtering in OR groups
+    manual_tags: Optional[ManualTagFilterGroup] = Field(None, description="Filter manually created tags (convenience field)")
+    ai_tags: Optional[AITagFilterGroup] = Field(None, description="Filter AI-generated tags (convenience field)")
 
 class AssetListFilters(Schema):
     """Complete filter configuration for asset listing"""
@@ -1312,6 +1348,10 @@ class AssetListFilters(Schema):
     favorite: Optional[bool] = Field(None, description="Filter by favorite status")
     date_uploaded_from: Optional[datetime] = Field(None, description="Uploaded after this date")
     date_uploaded_to: Optional[datetime] = Field(None, description="Uploaded before this date")
+    
+    # Convenience fields for direct tag filtering (alternative to nested tags.manual_tags/tags.ai_tags)
+    manual_tags: Optional[ManualTagFilter] = Field(None, description="Filter manually created tags (convenience field)")
+    ai_tags: Optional[AITagFilter] = Field(None, description="Filter AI-generated tags (convenience field)")
     
     # Color and quality filters
     colors: Optional[ColorFilter] = Field(None, description="Color-based filters")

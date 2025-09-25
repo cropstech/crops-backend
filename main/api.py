@@ -1466,6 +1466,224 @@ def _build_ai_aware_tag_filter(tag_names, tag_filter, exclude=False):
     
     return base_q
 
+def _build_tag_filter_query(tag_names, filter_type, is_ai_generated=None, tag_types=None, min_confidence=None):
+    """
+    Build Django Q object for tag filtering with optional AI parameters
+    
+    Args:
+        tag_names: List of tag names to filter by
+        filter_type: 'any_of', 'all_of', 'none_of', 'includes', or 'excludes'
+        is_ai_generated: True for AI tags, False for manual tags, None for all
+        tag_types: List of tag types to filter by (for AI tags)
+        min_confidence: Minimum confidence score (for AI tags)
+    
+    Returns:
+        Django Q object for the tag filter
+    """
+    from django.db.models import Q
+    
+    if not tag_names:
+        return Q()
+    
+    # Build AI conditions
+    ai_conditions = Q()
+    
+    # Filter by AI vs manual tags
+    if is_ai_generated is not None:
+        ai_conditions &= Q(tags__is_ai_generated=is_ai_generated)
+    
+    # Filter by tag types (only relevant for AI tags)
+    if tag_types and is_ai_generated is not False:
+        ai_conditions &= Q(tags__tag_type__in=tag_types)
+    
+    # Filter by minimum confidence score (only relevant for AI tags)
+    if min_confidence is not None and is_ai_generated is not False:
+        ai_conditions &= Q(tags__confidence_score__gte=min_confidence)
+    
+    # Build the appropriate query based on filter type
+    if filter_type in ['any_of', 'excludes']:
+        base_q = Q(tags__name__in=tag_names)
+    elif filter_type in ['all_of', 'includes']:
+        base_q = Q()
+        for tag_name in tag_names:
+            base_q &= Q(tags__name=tag_name)
+    elif filter_type == 'none_of':
+        base_q = ~Q(tags__name__in=tag_names)
+    else:
+        return Q()
+    
+    # Combine with AI conditions if any
+    if ai_conditions:
+        if filter_type in ['none_of', 'excludes']:
+            # For exclusions, we want to exclude tags that match both name and AI conditions
+            combined = Q(tags__name__in=tag_names) & ai_conditions
+            return ~combined if filter_type == 'none_of' else ~combined
+        elif filter_type in ['all_of', 'includes']:
+            # For all_of with AI conditions, each tag must meet the AI criteria
+            combined_q = Q()
+            for tag_name in tag_names:
+                combined_q &= Q(tags__name=tag_name) & ai_conditions
+            return combined_q
+        else:
+            # For any_of, combine base query with AI conditions
+            return base_q & ai_conditions
+    
+    # Handle exclusions without AI conditions
+    if filter_type == 'excludes':
+        return ~base_q
+    
+    return base_q
+
+def _build_enhanced_tag_filter(tag_filter):
+    """
+    Build Django Q object for enhanced tag filtering supporting separate manual and AI tags
+    
+    Args:
+        tag_filter: TagFilter object with new manual_tags and ai_tags fields
+    
+    Returns:
+        Django Q object combining manual and AI tag filters
+    """
+    from django.db.models import Q
+    
+    combined_q = Q()
+    
+    # Handle manual tags
+    if tag_filter.manual_tags:
+        manual_q = Q()
+        
+        if tag_filter.manual_tags.includes:
+            includes_q = _build_tag_filter_query(
+                tag_names=tag_filter.manual_tags.includes,
+                filter_type='includes',
+                is_ai_generated=False
+            )
+            manual_q &= includes_q
+        
+        if tag_filter.manual_tags.excludes:
+            excludes_q = _build_tag_filter_query(
+                tag_names=tag_filter.manual_tags.excludes,
+                filter_type='excludes',
+                is_ai_generated=False
+            )
+            manual_q &= excludes_q
+        
+        if manual_q:
+            combined_q &= manual_q
+    
+    # Handle AI tags
+    if tag_filter.ai_tags:
+        ai_q = Q()
+        
+        if tag_filter.ai_tags.includes:
+            includes_q = _build_tag_filter_query(
+                tag_names=tag_filter.ai_tags.includes,
+                filter_type='includes',
+                is_ai_generated=True,
+                tag_types=tag_filter.ai_tags.tag_types,
+                min_confidence=tag_filter.ai_tags.min_confidence
+            )
+            ai_q &= includes_q
+        
+        if tag_filter.ai_tags.excludes:
+            excludes_q = _build_tag_filter_query(
+                tag_names=tag_filter.ai_tags.excludes,
+                filter_type='excludes',
+                is_ai_generated=True,
+                tag_types=tag_filter.ai_tags.tag_types,
+                min_confidence=tag_filter.ai_tags.min_confidence
+            )
+            ai_q &= excludes_q
+        
+        if ai_q:
+            combined_q &= ai_q
+    
+    return combined_q
+
+def _build_enhanced_tag_group_filter(tag_filter):
+    """
+    Build Django Q object for enhanced tag group filtering supporting separate manual and AI tags
+    
+    Args:
+        tag_filter: TagFilterGroup object with new manual_tags and ai_tags fields
+    
+    Returns:
+        Django Q object combining manual and AI tag filters
+    """
+    from django.db.models import Q
+    
+    combined_q = Q()
+    
+    # Handle manual tags
+    if tag_filter.manual_tags:
+        manual_q = Q()
+        
+        if tag_filter.manual_tags.any_of:
+            any_of_q = _build_tag_filter_query(
+                tag_names=tag_filter.manual_tags.any_of,
+                filter_type='any_of',
+                is_ai_generated=False
+            )
+            manual_q &= any_of_q
+        
+        if tag_filter.manual_tags.all_of:
+            all_of_q = _build_tag_filter_query(
+                tag_names=tag_filter.manual_tags.all_of,
+                filter_type='all_of',
+                is_ai_generated=False
+            )
+            manual_q &= all_of_q
+        
+        if tag_filter.manual_tags.none_of:
+            none_of_q = _build_tag_filter_query(
+                tag_names=tag_filter.manual_tags.none_of,
+                filter_type='none_of',
+                is_ai_generated=False
+            )
+            manual_q &= none_of_q
+        
+        if manual_q:
+            combined_q &= manual_q
+    
+    # Handle AI tags
+    if tag_filter.ai_tags:
+        ai_q = Q()
+        
+        if tag_filter.ai_tags.any_of:
+            any_of_q = _build_tag_filter_query(
+                tag_names=tag_filter.ai_tags.any_of,
+                filter_type='any_of',
+                is_ai_generated=True,
+                tag_types=tag_filter.ai_tags.tag_types,
+                min_confidence=tag_filter.ai_tags.min_confidence
+            )
+            ai_q &= any_of_q
+        
+        if tag_filter.ai_tags.all_of:
+            all_of_q = _build_tag_filter_query(
+                tag_names=tag_filter.ai_tags.all_of,
+                filter_type='all_of',
+                is_ai_generated=True,
+                tag_types=tag_filter.ai_tags.tag_types,
+                min_confidence=tag_filter.ai_tags.min_confidence
+            )
+            ai_q &= all_of_q
+        
+        if tag_filter.ai_tags.none_of:
+            none_of_q = _build_tag_filter_query(
+                tag_names=tag_filter.ai_tags.none_of,
+                filter_type='none_of',
+                is_ai_generated=True,
+                tag_types=tag_filter.ai_tags.tag_types,
+                min_confidence=tag_filter.ai_tags.min_confidence
+            )
+            ai_q &= none_of_q
+        
+        if ai_q:
+            combined_q &= ai_q
+    
+    return combined_q
+
 @router.post("/workspaces/{uuid:workspace_id}/assets", response=PaginatedAssetResponse)
 @decorate_view(check_workspace_permission(WorkspaceMember.Role.COMMENTER))
 def list_assets(
@@ -1473,6 +1691,8 @@ def list_assets(
     workspace_id: UUID,
     filters: Optional[AssetListFilters] = None,
 ):  
+    from django.db.models import Q
+    
     workspace = get_object_or_404(Workspace, id=workspace_id)
     
     # Use defaults if no filters provided
@@ -1600,19 +1820,94 @@ def list_assets(
                     group_query &= ~Q(file_type__in=group.file_type.excludes)
             
             # Tag filtering within group with AI-awareness
-            if group.tags:
-                if group.tags.any_of:
-                    any_of_q = _build_ai_aware_tag_group_filter(group.tags.any_of, group.tags, 'any_of')
-                    if any_of_q:
-                        group_query &= any_of_q
-                if group.tags.all_of:
-                    all_of_q = _build_ai_aware_tag_group_filter(group.tags.all_of, group.tags, 'all_of')
-                    if all_of_q:
-                        group_query &= all_of_q
-                if group.tags.none_of:
-                    none_of_q = _build_ai_aware_tag_group_filter(group.tags.none_of, group.tags, 'none_of')
-                    if none_of_q:
-                        group_query &= none_of_q
+            # Handle top-level convenience fields first
+            if group.manual_tags or group.ai_tags:
+                group_combined_q = Q()
+                
+                # Handle group-level manual_tags
+                if group.manual_tags:
+                    group_manual_q = Q()
+                    if group.manual_tags.any_of:
+                        any_of_q = _build_tag_filter_query(
+                            tag_names=group.manual_tags.any_of,
+                            filter_type='any_of',
+                            is_ai_generated=False
+                        )
+                        group_manual_q &= any_of_q
+                    if group.manual_tags.all_of:
+                        all_of_q = _build_tag_filter_query(
+                            tag_names=group.manual_tags.all_of,
+                            filter_type='all_of',
+                            is_ai_generated=False
+                        )
+                        group_manual_q &= all_of_q
+                    if group.manual_tags.none_of:
+                        none_of_q = _build_tag_filter_query(
+                            tag_names=group.manual_tags.none_of,
+                            filter_type='none_of',
+                            is_ai_generated=False
+                        )
+                        group_manual_q &= none_of_q
+                    if group_manual_q:
+                        group_combined_q &= group_manual_q
+                
+                # Handle group-level ai_tags
+                if group.ai_tags:
+                    group_ai_q = Q()
+                    if group.ai_tags.any_of:
+                        any_of_q = _build_tag_filter_query(
+                            tag_names=group.ai_tags.any_of,
+                            filter_type='any_of',
+                            is_ai_generated=True,
+                            tag_types=group.ai_tags.tag_types,
+                            min_confidence=group.ai_tags.min_confidence
+                        )
+                        group_ai_q &= any_of_q
+                    if group.ai_tags.all_of:
+                        all_of_q = _build_tag_filter_query(
+                            tag_names=group.ai_tags.all_of,
+                            filter_type='all_of',
+                            is_ai_generated=True,
+                            tag_types=group.ai_tags.tag_types,
+                            min_confidence=group.ai_tags.min_confidence
+                        )
+                        group_ai_q &= all_of_q
+                    if group.ai_tags.none_of:
+                        none_of_q = _build_tag_filter_query(
+                            tag_names=group.ai_tags.none_of,
+                            filter_type='none_of',
+                            is_ai_generated=True,
+                            tag_types=group.ai_tags.tag_types,
+                            min_confidence=group.ai_tags.min_confidence
+                        )
+                        group_ai_q &= none_of_q
+                    if group_ai_q:
+                        group_combined_q &= group_ai_q
+                
+                if group_combined_q:
+                    group_query &= group_combined_q
+                    
+            elif group.tags:
+                # Check if using new enhanced filtering (manual_tags or ai_tags)
+                if group.tags.manual_tags or group.tags.ai_tags:
+                    # Use new enhanced tag group filtering
+                    enhanced_group_q = _build_enhanced_tag_group_filter(group.tags)
+                    if enhanced_group_q:
+                        group_query &= enhanced_group_q
+                else:
+                    # Use legacy tag group filtering for backward compatibility
+                    if group.tags.any_of:
+                        any_of_q = _build_ai_aware_tag_group_filter(group.tags.any_of, group.tags, 'any_of')
+                        if any_of_q:
+                            group_query &= any_of_q
+                    if group.tags.all_of:
+                        all_of_q = _build_ai_aware_tag_group_filter(group.tags.all_of, group.tags, 'all_of')
+                        if all_of_q:
+                            group_query &= all_of_q
+                    if group.tags.none_of:
+                        none_of_q = _build_ai_aware_tag_group_filter(group.tags.none_of, group.tags, 'none_of')
+                        if none_of_q:
+                            group_query &= none_of_q
             
             # Color filtering within group
             if group.colors:
@@ -1667,17 +1962,76 @@ def list_assets(
         query = query.filter(or_query)
     
     # Apply tag filtering with AI-awareness
-    if filters.tags:
-        if filters.tags.includes:
-            # Use AI-aware tag filtering for includes
-            include_q = _build_ai_aware_tag_filter(filters.tags.includes, filters.tags, exclude=False)
-            if include_q:
-                query = query.filter(include_q)
-        if filters.tags.excludes:
-            # Use AI-aware tag filtering for excludes
-            exclude_q = _build_ai_aware_tag_filter(filters.tags.excludes, filters.tags, exclude=True)
-            if exclude_q:
-                query = query.exclude(exclude_q)
+    # Handle top-level convenience fields first
+    if filters.manual_tags or filters.ai_tags:
+        combined_q = Q()
+        
+        # Handle top-level manual_tags
+        if filters.manual_tags:
+            manual_q = Q()
+            if filters.manual_tags.includes:
+                includes_q = _build_tag_filter_query(
+                    tag_names=filters.manual_tags.includes,
+                    filter_type='includes',
+                    is_ai_generated=False
+                )
+                manual_q &= includes_q
+            if filters.manual_tags.excludes:
+                excludes_q = _build_tag_filter_query(
+                    tag_names=filters.manual_tags.excludes,
+                    filter_type='excludes',
+                    is_ai_generated=False
+                )
+                manual_q &= excludes_q
+            if manual_q:
+                combined_q &= manual_q
+        
+        # Handle top-level ai_tags
+        if filters.ai_tags:
+            ai_q = Q()
+            if filters.ai_tags.includes:
+                includes_q = _build_tag_filter_query(
+                    tag_names=filters.ai_tags.includes,
+                    filter_type='includes',
+                    is_ai_generated=True,
+                    tag_types=filters.ai_tags.tag_types,
+                    min_confidence=filters.ai_tags.min_confidence
+                )
+                ai_q &= includes_q
+            if filters.ai_tags.excludes:
+                excludes_q = _build_tag_filter_query(
+                    tag_names=filters.ai_tags.excludes,
+                    filter_type='excludes',
+                    is_ai_generated=True,
+                    tag_types=filters.ai_tags.tag_types,
+                    min_confidence=filters.ai_tags.min_confidence
+                )
+                ai_q &= excludes_q
+            if ai_q:
+                combined_q &= ai_q
+        
+        if combined_q:
+            query = query.filter(combined_q)
+    
+    elif filters.tags:
+        # Check if using new enhanced filtering (manual_tags or ai_tags)
+        if filters.tags.manual_tags or filters.tags.ai_tags:
+            # Use new enhanced tag filtering
+            enhanced_q = _build_enhanced_tag_filter(filters.tags)
+            if enhanced_q:
+                query = query.filter(enhanced_q)
+        else:
+            # Use legacy tag filtering for backward compatibility
+            if filters.tags.includes:
+                # Use AI-aware tag filtering for includes
+                include_q = _build_ai_aware_tag_filter(filters.tags.includes, filters.tags, exclude=False)
+                if include_q:
+                    query = query.filter(include_q)
+            if filters.tags.excludes:
+                # Use AI-aware tag filtering for excludes
+                exclude_q = _build_ai_aware_tag_filter(filters.tags.excludes, filters.tags, exclude=True)
+                if exclude_q:
+                    query = query.exclude(exclude_q)
     
     # Apply color filtering
     if filters.colors:
