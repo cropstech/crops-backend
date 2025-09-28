@@ -1425,4 +1425,9 @@ class CustomFieldEditResponseSchema(Schema):
     updated_by: str
     updated_at: datetime
 
+class CameraMetadataResponse(Schema):
+    """Response schema for available camera makes and models in workspace"""
+    camera_makes: List[str] = Field(..., description="List of unique camera manufacturers found in workspace assets")
+    camera_models: List[str] = Field(..., description="List of unique camera models found in workspace assets")
+
 

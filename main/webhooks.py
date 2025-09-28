@@ -148,8 +148,16 @@ def asset_processed_webhook(request):
             if metadata_from_webhook:
                 asset.metadata = metadata_from_webhook
             
-            # Extract dimensions for specific fields if needed
-            if 'image' in metadata_from_webhook and isinstance(metadata_from_webhook['image'], dict) and 'dimensions' in metadata_from_webhook['image']:
+            # Extract dimensions from the top-level metadata (for images processed with new structure)
+            if 'dimensions' in metadata_from_webhook and isinstance(metadata_from_webhook['dimensions'], dict):
+                dimensions = metadata_from_webhook['dimensions']
+                if dimensions.get('width') is not None:
+                    asset.width = dimensions['width']
+                if dimensions.get('height') is not None:
+                    asset.height = dimensions['height']
+            
+            # Extract dimensions for specific fields if needed (legacy structure for videos/complex metadata)
+            elif 'image' in metadata_from_webhook and isinstance(metadata_from_webhook['image'], dict) and 'dimensions' in metadata_from_webhook['image']:
                 dimensions = metadata_from_webhook['image']['dimensions']
                 if isinstance(dimensions, dict):
                     if dimensions.get('width') is not None:
@@ -170,7 +178,11 @@ def asset_processed_webhook(request):
                         if isinstance(stream.get('codec'), dict) and stream.get('codec', {}).get('name') is not None:
                             asset.mime_type = f"video/{stream['codec']['name']}"
             
-            # Update format data if available
+            # Handle file_size from top-level metadata
+            if 'file_size' in metadata_from_webhook and metadata_from_webhook['file_size'] is not None:
+                asset.size = metadata_from_webhook['file_size']
+            
+            # Update format data if available (legacy structure with format as dict)
             if 'format' in metadata_from_webhook and isinstance(metadata_from_webhook['format'], dict):
                 format_data = metadata_from_webhook['format']
                 if format_data.get('size') is not None:
@@ -186,7 +198,7 @@ def asset_processed_webhook(request):
                 creation_date = _extract_creation_date_from_exif(analysis_data)
             
             # Fallback to format creation_time (for videos)
-            if not creation_date and 'format' in metadata_from_webhook:
+            if not creation_date and 'format' in metadata_from_webhook and isinstance(metadata_from_webhook['format'], dict):
                 format_data = metadata_from_webhook['format']
                 if format_data.get('creation_time') and format_data.get('creation_time').strip():
                     try:
@@ -200,8 +212,28 @@ def asset_processed_webhook(request):
             asset.date_created = creation_date or timezone.now()
 
             
-            # Update mime type from codec if available
-            if 'image' in metadata_from_webhook and isinstance(metadata_from_webhook['image'], dict) and 'codec' in metadata_from_webhook['image']:
+            # Update mime type from format string (for new structure)
+            if 'format' in metadata_from_webhook and isinstance(metadata_from_webhook['format'], str):
+                format_str = metadata_from_webhook['format'].lower()
+                # Map common formats to mime types
+                if format_str in ['heic', 'heif']:
+                    asset.mime_type = 'image/heic'
+                elif format_str in ['jpg', 'jpeg']:
+                    asset.mime_type = 'image/jpeg'
+                elif format_str == 'png':
+                    asset.mime_type = 'image/png'
+                elif format_str == 'webp':
+                    asset.mime_type = 'image/webp'
+                elif format_str == 'gif':
+                    asset.mime_type = 'image/gif'
+                elif format_str == 'bmp':
+                    asset.mime_type = 'image/bmp'
+                elif format_str == 'tiff':
+                    asset.mime_type = 'image/tiff'
+                # Add more format mappings as needed
+            
+            # Update mime type from codec if available (legacy structure)
+            elif 'image' in metadata_from_webhook and isinstance(metadata_from_webhook['image'], dict) and 'codec' in metadata_from_webhook['image']:
                 codec = metadata_from_webhook['image']['codec']
                 if isinstance(codec, dict) and codec.get('name') is not None:
                     asset.mime_type = f"image/{codec['name']}"

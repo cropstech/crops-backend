@@ -27,6 +27,7 @@ from .models import (
     AIActionDefinition,
     AIActionResult,
     Asset,
+    AssetAnalysis,
     Board,
     BoardAsset,
     BoardFollower,
@@ -105,7 +106,8 @@ from .schemas import (
     NotificationSchema,
     AssetListFilters,
     PaginatedAssetResponse,
-    TagSchema
+    TagSchema,
+    CameraMetadataResponse
 )
 from .utils import (
     send_invitation_email, process_file_metadata, process_file_metadata_background, 
@@ -3566,6 +3568,50 @@ def delete_field(request, workspace_id: UUID, field_id: int):
     return {"message": "Field deleted successfully"}
 
 
+@router.get("/workspaces/{uuid:workspace_id}/camera-metadata", response=CameraMetadataResponse)
+@decorate_view(check_workspace_permission(WorkspaceMember.Role.COMMENTER))
+def get_camera_metadata(request, workspace_id: UUID):
+    """
+    Get available camera makes and models from assets in the workspace.
+    
+    This endpoint returns unique camera manufacturers and models found in the 
+    workspace's assets, useful for populating filter dropdowns in the frontend.
+    
+    Permissions:
+    - Requires COMMENTER role or higher in the workspace
+    
+    Returns:
+    - List of unique camera makes (manufacturers)
+    - List of unique camera models
+    """
+    workspace = get_object_or_404(Workspace, id=workspace_id)
+    
+    # Get unique camera makes, excluding empty values
+    camera_makes = (
+        AssetAnalysis.objects
+        .filter(asset__workspace=workspace, camera_make__isnull=False)
+        .exclude(camera_make='')
+        .values_list('camera_make', flat=True)
+        .distinct()
+        .order_by('camera_make')
+    )
+    
+    # Get unique camera models, excluding empty values
+    camera_models = (
+        AssetAnalysis.objects
+        .filter(asset__workspace=workspace, camera_model__isnull=False)
+        .exclude(camera_model='')
+        .values_list('camera_model', flat=True)
+        .distinct()
+        .order_by('camera_model')
+    )
+    
+    return CameraMetadataResponse(
+        camera_makes=list(camera_makes),
+        camera_models=list(camera_models)
+    )
+
+
 # Notification System Endpoints
 
 # Board Following Endpoints
@@ -3940,3 +3986,47 @@ def delete_field(request, workspace_id: UUID, field_id: int):
         field.delete()
     
     return {"message": "Field deleted successfully"}
+
+
+@router.get("/workspaces/{uuid:workspace_id}/camera-metadata", response=CameraMetadataResponse)
+@decorate_view(check_workspace_permission(WorkspaceMember.Role.COMMENTER))
+def get_camera_metadata(request, workspace_id: UUID):
+    """
+    Get available camera makes and models from assets in the workspace.
+    
+    This endpoint returns unique camera manufacturers and models found in the 
+    workspace's assets, useful for populating filter dropdowns in the frontend.
+    
+    Permissions:
+    - Requires COMMENTER role or higher in the workspace
+    
+    Returns:
+    - List of unique camera makes (manufacturers)
+    - List of unique camera models
+    """
+    workspace = get_object_or_404(Workspace, id=workspace_id)
+    
+    # Get unique camera makes, excluding empty values
+    camera_makes = (
+        AssetAnalysis.objects
+        .filter(asset__workspace=workspace, camera_make__isnull=False)
+        .exclude(camera_make='')
+        .values_list('camera_make', flat=True)
+        .distinct()
+        .order_by('camera_make')
+    )
+    
+    # Get unique camera models, excluding empty values
+    camera_models = (
+        AssetAnalysis.objects
+        .filter(asset__workspace=workspace, camera_model__isnull=False)
+        .exclude(camera_model='')
+        .values_list('camera_model', flat=True)
+        .distinct()
+        .order_by('camera_model')
+    )
+    
+    return CameraMetadataResponse(
+        camera_makes=list(camera_makes),
+        camera_models=list(camera_models)
+    )
