@@ -1288,6 +1288,11 @@ class FileTypeFilter(Schema):
     includes: Optional[List[str]] = Field(None, description="Include only these file types")
     excludes: Optional[List[str]] = Field(None, description="Exclude these file types")
 
+class FileExtensionFilter(Schema):
+    """File extension filtering with include/exclude support"""
+    includes: Optional[List[str]] = Field(None, description="Include only these file extensions (e.g., ['jpg', 'png', 'mp4'])")
+    excludes: Optional[List[str]] = Field(None, description="Exclude these file extensions (e.g., ['tmp', 'log'])")
+
 class ManualTagFilterGroup(Schema):
     """Manual tag filtering within OR groups"""
     any_of: Optional[List[str]] = Field(None, description="Asset has ANY of these manual tags")
@@ -1320,6 +1325,7 @@ class TagFilterGroup(Schema):
 class FilterGroup(Schema):
     """A group of filters combined with AND internally, OR with other groups"""
     file_type: Optional[FileTypeFilter] = Field(None, description="File type filters for this group")
+    file_extension: Optional[FileExtensionFilter] = Field(None, description="File extension filters for this group")
     tags: Optional[TagFilterGroup] = Field(None, description="Tag filters for this group")
     colors: Optional[ColorFilter] = Field(None, description="Color filters for this group")
     favorite: Optional[bool] = Field(None, description="Filter by favorite status")
@@ -1345,6 +1351,7 @@ class AssetListFilters(Schema):
     custom_fields: Optional[List[CustomFieldFilter]] = Field(None, description="Custom field filters")
     tags: Optional[TagFilter] = Field(None, description="Tag filters")
     file_type: Optional[FileTypeFilter] = Field(None, description="File type filters with include/exclude support")
+    file_extension: Optional[FileExtensionFilter] = Field(None, description="File extension filters with include/exclude support")
     favorite: Optional[bool] = Field(None, description="Filter by favorite status")
     date_uploaded_from: Optional[datetime] = Field(None, description="Uploaded after this date")
     date_uploaded_to: Optional[datetime] = Field(None, description="Uploaded before this date")
@@ -1429,5 +1436,32 @@ class CameraMetadataResponse(Schema):
     """Response schema for available camera makes and models in workspace"""
     camera_makes: List[str] = Field(..., description="List of unique camera manufacturers found in workspace assets")
     camera_models: List[str] = Field(..., description="List of unique camera models found in workspace assets")
+
+class WorkspaceMetadataResponse(Schema):
+    """Flexible response schema for various metadata types available in workspace"""
+    # Basic file metadata
+    file_extensions: Optional[List[str]] = Field(None, description="List of unique file extensions found in workspace assets")
+    file_types: Optional[List[str]] = Field(None, description="List of unique file types found in workspace assets")
+    mime_types: Optional[List[str]] = Field(None, description="List of unique MIME types found in workspace assets")
+    
+    # Camera metadata
+    camera_makes: Optional[List[str]] = Field(None, description="List of unique camera manufacturers found in workspace assets")
+    camera_models: Optional[List[str]] = Field(None, description="List of unique camera models found in workspace assets")
+    
+    # Technical metadata
+    aperture_values: Optional[List[str]] = Field(None, description="List of unique aperture values found in workspace assets")
+    exposure_times: Optional[List[str]] = Field(None, description="List of unique exposure times found in workspace assets")
+    focal_lengths: Optional[List[str]] = Field(None, description="List of unique focal lengths found in workspace assets")
+    iso_values: Optional[List[int]] = Field(None, description="List of unique ISO values found in workspace assets")
+    
+    # Color metadata
+    simplified_colors: Optional[List[str]] = Field(None, description="List of unique simplified colors found in workspace assets")
+    
+    # AI labels
+    ai_labels: Optional[List[str]] = Field(None, description="List of unique AI-detected labels found in workspace assets")
+    
+    # Statistics
+    total_assets: Optional[int] = Field(None, description="Total number of assets in workspace")
+    date_range: Optional[Dict[str, str]] = Field(None, description="Date range of assets (oldest and newest upload dates)")
 
 

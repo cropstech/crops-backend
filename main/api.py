@@ -107,7 +107,8 @@ from .schemas import (
     AssetListFilters,
     PaginatedAssetResponse,
     TagSchema,
-    CameraMetadataResponse
+    CameraMetadataResponse,
+    WorkspaceMetadataResponse
 )
 from .utils import (
     send_invitation_email, process_file_metadata, process_file_metadata_background, 
@@ -1799,6 +1800,12 @@ def list_assets(
             if filters.file_type.excludes:
                 query = query.exclude(file_type__in=filters.file_type.excludes)
         
+        if filters.file_extension:
+            if filters.file_extension.includes:
+                query = query.filter(file_extension__in=filters.file_extension.includes)
+            if filters.file_extension.excludes:
+                query = query.exclude(file_extension__in=filters.file_extension.excludes)
+        
         if filters.favorite is not None:
             query = query.filter(favorite=filters.favorite)
         
@@ -1820,6 +1827,13 @@ def list_assets(
                     group_query &= Q(file_type__in=group.file_type.includes)
                 if group.file_type.excludes:
                     group_query &= ~Q(file_type__in=group.file_type.excludes)
+            
+            # File extension filtering within group
+            if group.file_extension:
+                if group.file_extension.includes:
+                    group_query &= Q(file_extension__in=group.file_extension.includes)
+                if group.file_extension.excludes:
+                    group_query &= ~Q(file_extension__in=group.file_extension.excludes)
             
             # Tag filtering within group with AI-awareness
             # Handle top-level convenience fields first
@@ -4030,3 +4044,189 @@ def get_camera_metadata(request, workspace_id: UUID):
         camera_makes=list(camera_makes),
         camera_models=list(camera_models)
     )
+
+@router.get("/workspaces/{uuid:workspace_id}/metadata", response=WorkspaceMetadataResponse)
+@decorate_view(check_workspace_permission(WorkspaceMember.Role.COMMENTER))
+def get_workspace_metadata(request, workspace_id: UUID, types: str = None):
+    """
+    Get various metadata types available in the workspace for populating filter dropdowns.
+    
+    This flexible endpoint can return different types of metadata based on the 'types' parameter.
+    
+    Parameters:
+    - types: Comma-separated list of metadata types to retrieve
+      Available types: file_extensions, file_types, mime_types, camera_makes, camera_models,
+                      aperture_values, exposure_times, focal_lengths, iso_values,
+                      simplified_colors, ai_labels, stats
+    
+    Examples:
+    - /metadata?types=file_extensions,file_types
+    - /metadata?types=camera_makes,camera_models,aperture_values
+    - /metadata (returns all available metadata)
+    
+    Permissions:
+    - Requires COMMENTER role or higher in the workspace
+    
+    Returns:
+    - Flexible metadata response with requested types populated
+    """
+    from django.db.models import Min, Max, Count
+    
+    workspace = get_object_or_404(Workspace, id=workspace_id)
+    
+    # Parse requested types
+    if types:
+        requested_types = [t.strip().lower() for t in types.split(',')]
+    else:
+        # If no types specified, return all available metadata
+        requested_types = [
+            'file_extensions', 'file_types', 'mime_types', 'camera_makes', 'camera_models',
+            'aperture_values', 'exposure_times', 'focal_lengths', 'iso_values',
+            'simplified_colors', 'ai_labels', 'stats'
+        ]
+    
+    response_data = {}
+    
+    # Base queries
+    assets_query = Asset.objects.filter(workspace=workspace, deleted_at__isnull=True)
+    analysis_query = AssetAnalysis.objects.filter(asset__workspace=workspace, asset__deleted_at__isnull=True)
+    
+    # File Extensions
+    if 'file_extensions' in requested_types:
+        file_extensions = (
+            assets_query
+            .filter(file_extension__isnull=False)
+            .exclude(file_extension='')
+            .values_list('file_extension', flat=True)
+            .distinct()
+            .order_by('file_extension')
+        )
+        response_data['file_extensions'] = list(file_extensions)
+    
+    # File Types
+    if 'file_types' in requested_types:
+        file_types = (
+            assets_query
+            .values_list('file_type', flat=True)
+            .distinct()
+            .order_by('file_type')
+        )
+        response_data['file_types'] = list(file_types)
+    
+    # MIME Types
+    if 'mime_types' in requested_types:
+        mime_types = (
+            assets_query
+            .filter(mime_type__isnull=False)
+            .exclude(mime_type='')
+            .values_list('mime_type', flat=True)
+            .distinct()
+            .order_by('mime_type')
+        )
+        response_data['mime_types'] = list(mime_types)
+    
+    # Camera Makes
+    if 'camera_makes' in requested_types:
+        camera_makes = (
+            analysis_query
+            .filter(camera_make__isnull=False)
+            .exclude(camera_make='')
+            .values_list('camera_make', flat=True)
+            .distinct()
+            .order_by('camera_make')
+        )
+        response_data['camera_makes'] = list(camera_makes)
+    
+    # Camera Models
+    if 'camera_models' in requested_types:
+        camera_models = (
+            analysis_query
+            .filter(camera_model__isnull=False)
+            .exclude(camera_model='')
+            .values_list('camera_model', flat=True)
+            .distinct()
+            .order_by('camera_model')
+        )
+        response_data['camera_models'] = list(camera_models)
+    
+    # Aperture Values
+    if 'aperture_values' in requested_types:
+        aperture_values = (
+            analysis_query
+            .filter(aperture__isnull=False)
+            .exclude(aperture='')
+            .values_list('aperture', flat=True)
+            .distinct()
+            .order_by('aperture')
+        )
+        response_data['aperture_values'] = list(aperture_values)
+    
+    # Exposure Times
+    if 'exposure_times' in requested_types:
+        exposure_times = (
+            analysis_query
+            .filter(exposure_time__isnull=False)
+            .exclude(exposure_time='')
+            .values_list('exposure_time', flat=True)
+            .distinct()
+            .order_by('exposure_time')
+        )
+        response_data['exposure_times'] = list(exposure_times)
+    
+    # Focal Lengths
+    if 'focal_lengths' in requested_types:
+        focal_lengths = (
+            analysis_query
+            .filter(focal_length__isnull=False)
+            .exclude(focal_length='')
+            .values_list('focal_length', flat=True)
+            .distinct()
+            .order_by('focal_length')
+        )
+        response_data['focal_lengths'] = list(focal_lengths)
+    
+    # ISO Values
+    if 'iso_values' in requested_types:
+        iso_values = (
+            analysis_query
+            .filter(iso_speed__isnull=False)
+            .values_list('iso_speed', flat=True)
+            .distinct()
+            .order_by('iso_speed')
+        )
+        response_data['iso_values'] = list(iso_values)
+    
+    # Simplified Colors
+    if 'simplified_colors' in requested_types:
+        # Extract simplified colors from the JSON field
+        simplified_colors = set()
+        for colors_list in analysis_query.exclude(simplified_colors=[]).values_list('simplified_colors', flat=True):
+            if colors_list and isinstance(colors_list, list):
+                simplified_colors.update(colors_list)
+        response_data['simplified_colors'] = sorted(list(simplified_colors))
+    
+    # AI Labels
+    if 'ai_labels' in requested_types:
+        ai_labels = set()
+        for labels_list in analysis_query.exclude(labels=[]).values_list('labels', flat=True):
+            if labels_list and isinstance(labels_list, list):
+                for label in labels_list:
+                    if isinstance(label, dict) and 'name' in label:
+                        ai_labels.add(label['name'])
+        response_data['ai_labels'] = sorted(list(ai_labels))
+    
+    # Statistics
+    if 'stats' in requested_types:
+        stats = assets_query.aggregate(
+            total_assets=Count('id'),
+            oldest_upload=Min('date_uploaded'),
+            newest_upload=Max('date_uploaded')
+        )
+        
+        response_data['total_assets'] = stats['total_assets']
+        response_data['date_range'] = {
+            'oldest_upload': stats['oldest_upload'].isoformat() if stats['oldest_upload'] else None,
+            'newest_upload': stats['newest_upload'].isoformat() if stats['newest_upload'] else None
+        }
+    
+    return WorkspaceMetadataResponse(**response_data)
